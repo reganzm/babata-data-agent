@@ -1,0 +1,29 @@
+import type { ChartThemeColors } from './chart-options'
+
+export function readCssVar(name: string, fallback: string): string {
+  if (typeof window === 'undefined') return fallback
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim()
+  return value || fallback
+}
+
+export function buildChartThemeFromCss(): ChartThemeColors {
+  return {
+    text: readCssVar('--foreground', 'oklch(0.93 0.005 260)'),
+    muted: readCssVar('--muted-foreground', 'oklch(0.68 0.01 260)'),
+    border: readCssVar('--border', 'oklch(0.32 0.018 260)'),
+    surface: readCssVar('--viz-surface', readCssVar('--card', 'oklch(0.21 0.014 260)')),
+    tableHeader: readCssVar('--viz-table-header', readCssVar('--viz-surface-elevated', 'oklch(0.25 0.015 260)')),
+    tableStripe: readCssVar('--viz-table-stripe', 'oklch(0.24 0.014 260 / 55%)'),
+    tableRowLine: readCssVar('--viz-table-row-line', readCssVar('--border', 'oklch(0.32 0.018 260)')),
+    palette: [
+      readCssVar('--chart-1', 'oklch(0.78 0.14 185)'),
+      readCssVar('--chart-2', 'oklch(0.76 0.16 155)'),
+      readCssVar('--chart-3', 'oklch(0.70 0.15 260)'),
+      readCssVar('--chart-4', 'oklch(0.80 0.16 85)'),
+      readCssVar('--chart-5', 'oklch(0.65 0.2 25)'),
+      readCssVar('--chart-6', 'oklch(0.72 0.12 320)'),
+    ],
+  }
+}
