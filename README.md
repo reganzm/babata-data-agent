@@ -33,7 +33,12 @@
 - 修改密码: pnpm user:chpwd <用户名> <新密码>
 
 # 示例界面
-
+![](./images/login.png)
+![](./images/main.png)
+![](./images/analysis.png)
+![](./images/workflow.png)
+![](./images/bloodline.png)
+![](./images/code_search.png)
 
 
 
