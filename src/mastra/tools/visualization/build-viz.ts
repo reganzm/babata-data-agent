@@ -4,6 +4,7 @@ import {
   appendVisualizationToReport,
   buildVisualizationFromQuery,
 } from '@/lib/visualization/build-artifact'
+import { assertDaxAgentInteractionMode, getDaxRuntime } from '@/lib/dax-runtime-context'
 import { queryResultSchema } from '@/lib/visualization/types'
 import { defaultToolHooks, runToolWithHooks } from '@/mastra/tools/hooks'
 
@@ -25,6 +26,9 @@ export const buildVisualizationTool = createTool({
       input,
       hooks: defaultToolHooks,
       execute: async ({ queryResult, summary }) => {
+        if (getDaxRuntime()?.chatMode === 'plan') {
+          assertDaxAgentInteractionMode('生成可视化')
+        }
     const artifact = buildVisualizationFromQuery(queryResult, { summary })
     if (!artifact) {
       return { vizBlock: '', chartCount: 0 }

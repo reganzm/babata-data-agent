@@ -3,6 +3,7 @@ import {
   buildVisualizationFromStructuredJson,
   parseVisualizationBlock,
 } from './build-artifact'
+import { artifactHasRenderableContent } from './recommend-charts'
 import {
   hasMarkdownDataTable,
   queryResultFromMarkdown,
@@ -19,14 +20,49 @@ const VIZ_BLOCK_RE = new RegExp(
   'gi',
 )
 const JSON_BLOCK_RE = /```json\s*([\s\S]*?)```/gi
+const OPEN_VIZ_FENCE_RE = /```(?:babata-viz|json)\b[^\n]*\n[\s\S]*$/i
 
 export interface ParsedAssistantContent {
   markdown: string
   artifact: AnalysisArtifact | null
 }
 
+export function looksLikeVisualizationJson(content: string): boolean {
+  const trimmed = content.trim()
+  if (!trimmed.startsWith('{')) return false
+  return (
+    /"version"\s*:\s*1/i.test(trimmed) ||
+    /"charts"\s*:\s*\[/i.test(trimmed) ||
+    /"metrics"\s*:\s*\[/i.test(trimmed) ||
+    /"rows"\s*:\s*\[/i.test(trimmed) ||
+    /"visualization"\s*:/i.test(trimmed) ||
+    /"numbers"\s*:\s*\[/i.test(trimmed)
+  )
+}
+
 function stripBlocks(text: string, pattern: RegExp): string {
   return text.replace(pattern, '').trim()
+}
+
+export function stripVisualizationBlocksFromMarkdown(
+  text: string,
+  options?: { isStreaming?: boolean; forceStripJson?: boolean },
+): string {
+  let markdown = stripBlocks(text, VIZ_BLOCK_RE)
+
+  markdown = markdown.replace(JSON_BLOCK_RE, (match, body) => {
+    const raw = typeof body === 'string' ? body : ''
+    if (options?.forceStripJson || looksLikeVisualizationJson(raw)) {
+      return ''
+    }
+    return match
+  })
+
+  if (options?.isStreaming) {
+    markdown = markdown.replace(OPEN_VIZ_FENCE_RE, '')
+  }
+
+  return markdown.replace(/\n{3,}/g, '\n\n').trim()
 }
 
 function parseJsonBlocks(text: string): AnalysisArtifact | null {
@@ -51,6 +87,44 @@ function artifactFromMarkdownTables(text: string): AnalysisArtifact | null {
   return buildVisualizationFromQuery(queryResult)
 }
 
+export function extractAllArtifactsFromText(text: string): AnalysisArtifact[] {
+  const artifacts: AnalysisArtifact[] = []
+
+  for (const match of text.matchAll(VIZ_BLOCK_RE)) {
+    const artifact = parseVisualizationBlock(match[1] ?? '')
+    if (
+      artifact &&
+      analysisArtifactSchema.safeParse(artifact).success &&
+      artifactHasRenderableContent(artifact)
+    ) {
+      artifacts.push(artifact)
+    }
+  }
+
+  for (const match of text.matchAll(JSON_BLOCK_RE)) {
+    const raw = match[1]
+    if (!raw) continue
+    try {
+      const payload = JSON.parse(raw.trim()) as Record<string, unknown>
+      const artifact = buildVisualizationFromStructuredJson(payload)
+      if (
+        artifact &&
+        analysisArtifactSchema.safeParse(artifact).success &&
+        artifactHasRenderableContent(artifact)
+      ) {
+        artifacts.push(artifact)
+      }
+    } catch {
+      /* try next block */
+    }
+  }
+
+  if (artifacts.length > 0) return artifacts
+
+  const tableArtifact = artifactFromMarkdownTables(text)
+  return tableArtifact ? [tableArtifact] : []
+}
+
 export function parseAssistantMessage(text: string): ParsedAssistantContent {
   let artifact: AnalysisArtifact | null = null
   let markdownSource = text
@@ -72,22 +146,27 @@ export function parseAssistantMessage(text: string): ParsedAssistantContent {
     }
   }
 
-  let markdown = stripBlocks(markdownSource, VIZ_BLOCK_RE)
-  if (artifact) {
-    markdown = stripBlocks(markdown, JSON_BLOCK_RE)
-  }
+  let markdown = stripVisualizationBlocksFromMarkdown(markdownSource, {
+    forceStripJson: Boolean(artifact),
+  })
 
   return {
     markdown: markdown.replace(/\n{3,}/g, '\n\n').trim(),
-    artifact: artifact && analysisArtifactSchema.safeParse(artifact).success
-      ? artifact
-      : null,
+    artifact:
+      artifact &&
+      analysisArtifactSchema.safeParse(artifact).success &&
+      artifactHasRenderableContent(artifact)
+        ? artifact
+        : null,
   }
 }
 
 export function hasVisualizationContent(text: string): boolean {
+  if (/```(?:babata-viz|json)\b/i.test(text)) return true
   if (/```babata-viz/i.test(text)) return true
   if (/"charts"\s*:\s*\[/i.test(text)) return true
+  if (/\"metrics\"\s*:\s*\[/i.test(text)) return true
+  if (/\"version\"\s*:\s*1/i.test(text)) return true
   if (/"rows"\s*:\s*\[/i.test(text)) return true
   if (/"visualization"\s*:/i.test(text)) return true
   return hasMarkdownDataTable(text)

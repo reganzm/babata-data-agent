@@ -2,7 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { babataAgent } from './babata'
 import { chestnutAgent } from './chestnut'
+import { daxAgent } from './dax'
 import { hundunAgent } from './hundun'
+import { jujuAgent } from './juju'
 import { ximoAgent } from './ximo'
 
 const agents = [
@@ -10,6 +12,8 @@ const agents = [
   ['ximo', ximoAgent],
   ['hundun', hundunAgent],
   ['chestnut', chestnutAgent],
+  ['juju', jujuAgent],
+  ['dax', daxAgent],
 ] as const
 
 test('agents include skill usage instructions', async () => {

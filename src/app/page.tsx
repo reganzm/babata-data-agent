@@ -5,8 +5,10 @@ import { motion, AnimatePresence } from 'motion/react'
 import type { UIMessage } from '@ai-sdk/react'
 import { ChatPanel } from '@/app/components/ChatPanel'
 import { ConversationList } from '@/app/components/ConversationList'
-import { ThemeToggle } from '@/app/components/ThemeToggle'
-import { AuthHeaderActions } from '@/app/components/AuthHeaderActions'
+import { DataWorkspaceHeader } from '@/app/components/DataWorkspaceHeader'
+import { useAuthSession } from '@/app/components/useAuthSession'
+import { useLayoutCollapse } from '@/app/components/useLayoutCollapse'
+import { QueryNormalizationDialog } from '@/app/components/QueryNormalizationDialog'
 import { WorkflowIntentClarificationDialog } from '@/app/components/WorkflowIntentClarificationDialog'
 import { BABATA_RESOURCE_ID } from '@/lib/db/constants'
 import { fadeIn } from '@/lib/animations'
@@ -30,6 +32,9 @@ import {
 import { createLatestTaskQueue } from '@/lib/latest-task-queue'
 
 export default function Home() {
+  const auth = useAuthSession()
+  const layout = useLayoutCollapse()
+  const mastraResourceId = auth.resourceId ?? BABATA_RESOURCE_ID
   const [conversations, setConversations] = useState<StoredConversation[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -38,43 +43,10 @@ export default function Home() {
     conversationId: string
     messages: StoredMessage[]
   } | null>(null)
-  const [authUser, setAuthUser] = useState<{
-    username: string
-    resourceId: string
-  } | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const res = await fetch('/api/auth/session')
-        const data = (await res.json()) as {
-          authenticated?: boolean
-          authDisabled?: boolean
-          user?: { username: string; resourceId: string } | null
-        }
-        if (cancelled) return
-        if (data.authDisabled) {
-          setAuthUser({
-            username: '开发模式',
-            resourceId: BABATA_RESOURCE_ID,
-          })
-          return
-        }
-        if (data.authenticated && data.user) {
-          setAuthUser({
-            username: data.user.username,
-            resourceId: data.user.resourceId,
-          })
-        }
-      } catch {
-        /* middleware 会处理未登录 */
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const liveMessagesUpdaterRef = useRef<
+    ((conversationId: string, messages: UIMessage[]) => void) | null
+  >(null)
+  const persistFlushRef = useRef<(() => void) | null>(null)
 
   const activeConversation = conversations.find((c) => c.id === activeId)
   const workflowSuspended = Boolean(
@@ -258,13 +230,13 @@ export default function Home() {
   )
 
   const handleMessagesChange = useCallback(
-    async (messages: UIMessage[]) => {
-      if (!activeId) return
+    async (conversationId: string, messages: UIMessage[]) => {
+      if (!conversationId) return
       try {
         const storedMessages = messages.map(toStoredMessage)
-        const activeConv = conversations.find((c) => c.id === activeId)
-        const updates = buildMessagesUpdatePayload(storedMessages, activeConv)
-        const updated = await updateConversationRemote(activeId, {
+        const sourceConv = conversations.find((c) => c.id === conversationId)
+        const updates = buildMessagesUpdatePayload(storedMessages, sourceConv)
+        const updated = await updateConversationRemote(conversationId, {
           ...updates,
         })
         if (updated) {
@@ -274,7 +246,7 @@ export default function Home() {
         console.error('保存消息失败', e)
       }
     },
-    [activeId, applyConversationUpdate, conversations],
+    [applyConversationUpdate, conversations],
   )
 
   const handleMessagesChangeRef = useRef(handleMessagesChange)
@@ -284,30 +256,26 @@ export default function Home() {
 
   const clarificationMessageSaveQueue = useMemo(
     () =>
-      createLatestTaskQueue<UIMessage[]>((messages) =>
-        handleMessagesChangeRef.current(messages),
+      createLatestTaskQueue<{
+        conversationId: string
+        messages: UIMessage[]
+      }>((payload) =>
+        handleMessagesChangeRef.current(
+          payload.conversationId,
+          payload.messages,
+        ),
       ),
     [],
   )
 
   return (
     <main className="flex h-screen flex-col bg-background">
-      <header className="z-10 border-b border-border bg-card px-6 py-4 shadow-sm dark:shadow-[0_1px_0_0_var(--sidebar-border),0_4px_24px_-4px_oklch(0_0_0_/_35%)]">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="bg-gradient-to-r from-neon-cyan to-neon-green bg-clip-text text-xl font-bold text-transparent">
-              Babata
-            </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              智囊团 · 巴巴塔 / 西莫 / 混沌 / 小栗子
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            {authUser && <AuthHeaderActions username={authUser.username} />}
-            <ThemeToggle />
-          </div>
-        </div>
-      </header>
+      <DataWorkspaceHeader
+        username={auth.username}
+        subtitle="智囊团 · 巴巴塔 / 西莫 / 混沌 / 小栗子 / 达克斯"
+        collapsed={layout.headerCollapsed}
+        onToggleCollapse={layout.toggleHeader}
+      />
 
       <div className="flex flex-1 overflow-hidden">
         <ConversationList
@@ -319,6 +287,8 @@ export default function Home() {
           onExport={(id) => void handleExportConversation(id)}
           onRename={(id, title) => void handleRename(id, title)}
           onTogglePin={(id, pinned) => void handleTogglePin(id, pinned)}
+          collapsed={layout.sidebarCollapsed}
+          onToggleCollapse={layout.toggleSidebar}
         />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-muted/30 dark:bg-muted/40">
           {loading ? (
@@ -340,12 +310,12 @@ export default function Home() {
                   <ChatPanel
                     key={activeId}
                     conversationId={activeId}
-                    mastraResourceId={
-                      authUser?.resourceId ?? BABATA_RESOURCE_ID
-                    }
+                    mastraResourceId={mastraResourceId}
                     messagesVersion={messagesVersion}
                     workflowSuspended={workflowSuspended}
                     pendingApproval={activeConversation?.metadata?.pendingApproval}
+                    liveMessagesUpdaterRef={liveMessagesUpdaterRef}
+                    persistFlushRef={persistFlushRef}
                     onStreamSettled={() => {
                       void refreshActiveConversation()
                       void refreshConversations()
@@ -353,23 +323,43 @@ export default function Home() {
                     onWorkflowApprovalResolved={() => {
                       void refreshActiveConversation()
                     }}
-                    onMessagesChange={(msgs) => void handleMessagesChange(msgs)}
+                    onMessagesChange={(conversationId, msgs) =>
+                      void handleMessagesChange(conversationId, msgs)
+                    }
                     onLiveMessagesChange={handleLiveMessagesChange}
                   />
                 </div>
-                <WorkflowIntentClarificationDialog
+                <QueryNormalizationDialog
                   conversationId={activeId}
-                  mastraResourceId={authUser?.resourceId ?? BABATA_RESOURCE_ID}
+                  mastraResourceId={mastraResourceId}
                   pendingApproval={activeConversation?.metadata?.pendingApproval}
                   onResolved={() => {
+                    persistFlushRef.current?.()
                     void clarificationMessageSaveQueue.flush().then(() => {
                       setMessagesVersion((v) => v + 1)
                       void refreshActiveConversation()
                       void refreshConversations()
                     })
                   }}
-                  onMessagesUpdate={(msgs) => {
-                    clarificationMessageSaveQueue.push(msgs)
+                  onMessagesUpdate={(conversationId, msgs) => {
+                    // 流式过程只更新 UI；落库交给 ChatPanel 防抖，避免每个 chunk PATCH
+                    liveMessagesUpdaterRef.current?.(conversationId, msgs)
+                  }}
+                />
+                <WorkflowIntentClarificationDialog
+                  conversationId={activeId}
+                  mastraResourceId={mastraResourceId}
+                  pendingApproval={activeConversation?.metadata?.pendingApproval}
+                  onResolved={() => {
+                    persistFlushRef.current?.()
+                    void clarificationMessageSaveQueue.flush().then(() => {
+                      setMessagesVersion((v) => v + 1)
+                      void refreshActiveConversation()
+                      void refreshConversations()
+                    })
+                  }}
+                  onMessagesUpdate={(conversationId, msgs) => {
+                    liveMessagesUpdaterRef.current?.(conversationId, msgs)
                   }}
                 />
               </div>

@@ -2,7 +2,7 @@
  * 多模型提供商配置
  *
  * 通过环境变量在 OpenAI / Anthropic 之间切换，支持 MODEL_BASE_URL 对接兼容 API。
- * P4：MODEL_BABATA / MODEL_XIMO / MODEL_CHESTNUT / MODEL_HUNDUN 可按 Agent 覆盖 MODEL_NAME。
+ * P4：MODEL_BABATA / MODEL_XIMO / MODEL_CHESTNUT / MODEL_HUNDUN / MODEL_JUJU / MODEL_DAX 可按 Agent 覆盖 MODEL_NAME。
  */
 
 import { createProviderRegistry } from 'ai'
@@ -19,13 +19,21 @@ export const registry = createProviderRegistry({
   anthropic,
 })
 
-export type AgentModelRole = 'babata' | 'ximo' | 'chestnut' | 'hundun'
+export type AgentModelRole =
+  | 'babata'
+  | 'ximo'
+  | 'chestnut'
+  | 'hundun'
+  | 'juju'
+  | 'dax'
 
 const ROLE_MODEL_ENV: Record<AgentModelRole, string | undefined> = {
   babata: process.env.MODEL_BABATA,
   ximo: process.env.MODEL_XIMO,
   chestnut: process.env.MODEL_CHESTNUT,
   hundun: process.env.MODEL_HUNDUN,
+  juju: process.env.MODEL_JUJU,
+  dax: process.env.MODEL_DAX,
 }
 
 export function getModelIdForRole(role: AgentModelRole = 'babata'): string {

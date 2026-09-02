@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
+import { assistantDisplaySignature } from '@/lib/chat-message-live'
 import {
   mergeStructuredMetrics,
   resolveAssistantPresentation,
@@ -22,20 +23,20 @@ interface AssistantMessageContentProps {
   isStreaming: boolean
 }
 
-export function AssistantMessageContent({
+function AssistantMessageContentInner({
   parts,
   isStreaming,
 }: AssistantMessageContentProps) {
   const presentation = useMemo(() => {
-    const resolved = resolveAssistantPresentation(parts)
+    const resolved = resolveAssistantPresentation(parts, { isStreaming })
     if (!resolved.artifact) return resolved
     return {
       ...resolved,
       artifact: mergeStructuredMetrics(resolved.artifact, parts),
     }
-  }, [parts])
+  }, [parts, isStreaming])
 
-  const canShowViz = Boolean(presentation.artifact && !isStreaming)
+  const canShowViz = Boolean(presentation.artifact)
 
   const markdownToRender = useMemo(() => {
     if (!presentation.markdown) return ''
@@ -62,3 +63,10 @@ export function AssistantMessageContent({
     </div>
   )
 }
+
+export const AssistantMessageContent = memo(
+  AssistantMessageContentInner,
+  (prev, next) =>
+    prev.isStreaming === next.isStreaming &&
+    assistantDisplaySignature(prev.parts) === assistantDisplaySignature(next.parts),
+)

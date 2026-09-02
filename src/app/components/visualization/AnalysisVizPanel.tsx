@@ -1,3 +1,6 @@
+'use client'
+
+import { memo } from 'react'
 import type { AnalysisArtifact, ChartSpec } from '@/lib/visualization/types'
 import { Badge } from '@/components/ui/badge'
 import { ChartCard } from './ChartCard'
@@ -11,6 +14,8 @@ interface AnalysisVizPanelProps {
 function isRenderableChart(spec: ChartSpec): boolean {
   return spec.type !== 'metric' && spec.type !== 'table' && spec.data.length > 0
 }
+
+const MemoChartCard = memo(ChartCard)
 
 export function AnalysisVizPanel({ artifact }: AnalysisVizPanelProps) {
   const charts = artifact.charts.filter(isRenderableChart)
@@ -52,7 +57,7 @@ export function AnalysisVizPanel({ artifact }: AnalysisVizPanelProps) {
         {heroCharts.length > 0 && (
           <div className="space-y-3">
             {heroCharts.map((spec) => (
-              <ChartCard key={spec.id} spec={spec} />
+              <MemoChartCard key={spec.id} spec={spec} />
             ))}
           </div>
         )}
@@ -60,7 +65,7 @@ export function AnalysisVizPanel({ artifact }: AnalysisVizPanelProps) {
         {supportCharts.length > 0 && (
           <div className="grid gap-3 lg:grid-cols-2">
             {supportCharts.map((spec) => (
-              <ChartCard key={spec.id} spec={spec} />
+              <MemoChartCard key={spec.id} spec={spec} />
             ))}
           </div>
         )}

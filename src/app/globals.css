@@ -190,6 +190,34 @@ html.transition-theme *::after {
   margin-top: 0;
 }
 
+@keyframes login-orb-drift-a {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(24px, -18px) scale(1.08);
+  }
+}
+
+@keyframes login-orb-drift-b {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(-20px, 14px) scale(1.06);
+  }
+}
+
+.login-orb-a {
+  animation: login-orb-drift-a 14s ease-in-out infinite;
+}
+
+.login-orb-b {
+  animation: login-orb-drift-b 18s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

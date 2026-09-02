@@ -109,6 +109,29 @@ test('shouldReplacePendingApproval allows same-run forward approval stage', () =
   )
 })
 
+test('extractWorkflowSuspendFromChunk maps confirm-normalized-query tool suspend', () => {
+  const result = extractWorkflowSuspendFromChunk({
+    type: 'data-tool-call-suspended',
+    data: {
+      runId: 'agent-run-1',
+      toolName: 'confirmNormalizedQuery',
+      suspendPayload: {
+        approvalType: 'query-normalization',
+        originalQuery: '去年订单',
+        normalizedQuery: '去年 订单',
+      },
+    },
+  })
+
+  assert.ok(result)
+  assert.equal(result.workflowId, 'query-normalization')
+  assert.equal(result.agentRunId, 'agent-run-1')
+  assert.equal(
+    (result.payload as { approvalType?: string }).approvalType,
+    'query-normalization',
+  )
+})
+
 test('extractWorkflowSuspendFromChunk ignores stale higher-step payload on successful step', () => {
   const result = extractWorkflowSuspendFromChunk({
     type: 'data-workflow',

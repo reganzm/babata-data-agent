@@ -26,7 +26,8 @@ import type {
 
 const MAX_CHART_ROWS = 200
 const MAX_TABLE_ROWS = 100
-const MAX_CHARTS = 2
+const MAX_CHARTS = 4
+export const MAX_MERGED_CHARTS = 6
 
 function truncateRows(rows: DataRow[], limit = MAX_CHART_ROWS): DataRow[] {
   return rows.slice(0, limit)

@@ -1,15 +1,22 @@
 'use client'
 
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react'
+import {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useCallback,
+  useMemo,
+  type MutableRefObject,
+} from 'react'
 import { useChat, type UIMessage } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import { motion, AnimatePresence } from 'motion/react'
-import { ChevronDown, Send, Square } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { slideUp } from '@/lib/animations'
-import { ToolStatusBadge } from './ToolStatusBadge'
+import { ToolCallsPanel } from './ToolCallsPanel'
 import { WorkflowProgressPanel } from './WorkflowProgressPanel'
 import { AssistantMessageContent } from './visualization/AssistantMessageContent'
 import {
@@ -27,7 +34,6 @@ import {
 } from '@/lib/workflow-progress'
 import { pollWorkflowRunProgress } from '@/lib/workflow-stream-merge'
 import { shouldRenderWorkflowReport } from '@/lib/workflow-report-rendering'
-import { formatToolErrorMessage } from '@/lib/tool-error-message'
 import {
   messageHasVisualization,
 } from '@/lib/visualization/extract-artifact-from-parts'
@@ -38,6 +44,21 @@ import {
 } from '@/lib/conversation-store'
 import type { ConversationMetadata } from '@/lib/db/conversations'
 import { resumeAfterSqlApproval } from '@/lib/workflow-resume-client'
+import { shouldApplyConversationUpdate } from '@/lib/conversation-persist-target'
+import { isHeartbeatUserMessage } from '@/lib/chat-heartbeat'
+import {
+  findLastAssistantMessageId,
+  getAssistantMotionInitial,
+  isLiveAssistantMessage,
+  messagesDisplaySignature,
+} from '@/lib/chat-message-live'
+import { useChatHeartbeat } from './useChatHeartbeat'
+import {
+  DEFAULT_CHAT_COMPOSER_STATE,
+  normalizeChatComposerState,
+  type ChatComposerState,
+} from '@/lib/chat-composer-state'
+import { ChatComposer } from './ChatComposer'
 
 const SCROLL_THRESHOLD = 80
 
@@ -45,6 +66,7 @@ const DELEGATION_LABELS: Record<string, string> = {
   'agent-ximo': '西莫 · 数据分析',
   'agent-chestnut': '小栗子 · 写作润色',
   'agent-hundun': '混沌 · 上下文支撑',
+  'agent-dax': '达克斯 · 本地问数',
   'workflow-data-analysis-report': '标准分析流程',
   'workflow-weekly-metrics': '周报指标流水线',
   'workflow-dataAnalysisReport': '标准分析流程',
@@ -52,6 +74,7 @@ const DELEGATION_LABELS: Record<string, string> = {
   ximo: '西莫 · 数据分析',
   chestnut: '小栗子 · 写作润色',
   hundun: '混沌 · 上下文支撑',
+  dax: '达克斯 · 本地问数',
   'data-analysis-report': '标准分析流程',
   'weekly-metrics': '周报指标流水线',
 }
@@ -65,13 +88,22 @@ interface ChatPanelProps {
   messagesVersion?: number
   workflowSuspended?: boolean
   pendingApproval?: ConversationMetadata['pendingApproval']
-  onMessagesChange?: (messages: UIMessage[]) => void
+  onMessagesChange?: (conversationId: string, messages: UIMessage[]) => void
   /** 流式结束或轮询时刷新会话（含 Workflow metadata） */
   onStreamSettled?: () => void
   /** SQL 审批完成（批准/拒绝）后刷新 */
   onWorkflowApprovalResolved?: () => void
   /** 当前可见消息快照，用于导出等不应等待持久化的操作 */
   onLiveMessagesChange?: (conversationId: string, messages: UIMessage[]) => void
+  /**
+   * 外部 resume（如查询规范化确认）写入实时消息的回调槽。
+   * ChatPanel 挂载后会注入 setMessages，卸载时清空。
+   */
+  liveMessagesUpdaterRef?: MutableRefObject<
+    ((conversationId: string, messages: UIMessage[]) => void) | null
+  >
+  /** 外部 resume 结束后强制立刻落库 */
+  persistFlushRef?: MutableRefObject<(() => void) | null>
 }
 
 export function ChatPanel({
@@ -84,10 +116,16 @@ export function ChatPanel({
   onStreamSettled,
   onWorkflowApprovalResolved,
   onLiveMessagesChange,
+  liveMessagesUpdaterRef,
+  persistFlushRef,
 }: ChatPanelProps) {
   const [hydratedMessages, setHydratedMessages] = useState<UIMessage[] | null>(
     null,
   )
+  const [hydratedSelection, setHydratedSelection] = useState<ChatComposerState>(
+    DEFAULT_CHAT_COMPOSER_STATE,
+  )
+  const [hydratedMetadata, setHydratedMetadata] = useState<ConversationMetadata>({})
 
   useEffect(() => {
     if (!conversationId) {
@@ -102,6 +140,14 @@ export function ChatPanel({
       const conv = await fetchConversationById(conversationId)
       if (!cancelled) {
         setHydratedMessages(conv?.messages.map(toInitialMessage) ?? [])
+        setHydratedMetadata(conv?.metadata ?? {})
+        setHydratedSelection(
+          normalizeChatComposerState({
+            selectedDataSourceId: conv?.metadata?.selectedDataSourceId,
+            selectedKnowledgeBaseId: conv?.metadata?.selectedKnowledgeBaseId,
+            chatMode: conv?.metadata?.chatMode,
+          }),
+        )
       }
     })()
 
@@ -132,12 +178,16 @@ export function ChatPanel({
       conversationId={conversationId}
       mastraResourceId={mastraResourceId}
       initialMessages={hydratedMessages}
+      initialSelection={hydratedSelection}
+      initialMetadata={hydratedMetadata}
       workflowSuspended={workflowSuspended}
       pendingApproval={pendingApproval}
       onMessagesChange={onMessagesChange}
       onStreamSettled={onStreamSettled}
       onWorkflowApprovalResolved={onWorkflowApprovalResolved}
       onLiveMessagesChange={onLiveMessagesChange}
+      liveMessagesUpdaterRef={liveMessagesUpdaterRef}
+      persistFlushRef={persistFlushRef}
     />
   )
 }
@@ -146,25 +196,67 @@ interface ChatPanelChatProps {
   conversationId: string
   mastraResourceId: string
   initialMessages: UIMessage[]
+  initialSelection: ChatComposerState
+  initialMetadata: ConversationMetadata
   workflowSuspended: boolean
   pendingApproval?: ConversationMetadata['pendingApproval']
-  onMessagesChange?: (messages: UIMessage[]) => void
+  onMessagesChange?: (conversationId: string, messages: UIMessage[]) => void
   onStreamSettled?: () => void
   onWorkflowApprovalResolved?: () => void
   onLiveMessagesChange?: (conversationId: string, messages: UIMessage[]) => void
+  liveMessagesUpdaterRef?: MutableRefObject<
+    ((conversationId: string, messages: UIMessage[]) => void) | null
+  >
+  persistFlushRef?: MutableRefObject<(() => void) | null>
 }
 
 function ChatPanelChat({
   conversationId,
   mastraResourceId,
   initialMessages,
+  initialSelection,
+  initialMetadata,
   workflowSuspended,
   pendingApproval,
   onMessagesChange,
   onStreamSettled,
   onWorkflowApprovalResolved,
   onLiveMessagesChange,
+  liveMessagesUpdaterRef,
+  persistFlushRef,
 }: ChatPanelChatProps) {
+  const [localSelection, setLocalSelection] = useState(() =>
+    normalizeChatComposerState(initialSelection),
+  )
+  const localSelectionRef = useRef(normalizeChatComposerState(initialSelection))
+  localSelectionRef.current = localSelection
+  const metadataRef = useRef(initialMetadata)
+  metadataRef.current = {
+    ...initialMetadata,
+    selectedDataSourceId: localSelection.selectedDataSourceId || undefined,
+    selectedKnowledgeBaseId: localSelection.selectedKnowledgeBaseId || undefined,
+    chatMode: localSelection.chatMode,
+  }
+
+  const persistSelection = useCallback(
+    (next: ChatComposerState) => {
+      const normalized = normalizeChatComposerState(next)
+      localSelectionRef.current = normalized
+      setLocalSelection(normalized)
+      void fetchConversationById(conversationId).then((conversation) =>
+        updateConversationRemote(conversationId, {
+          metadata: {
+            ...(conversation?.metadata ?? metadataRef.current),
+            selectedDataSourceId: normalized.selectedDataSourceId || undefined,
+            selectedKnowledgeBaseId: normalized.selectedKnowledgeBaseId || undefined,
+            chatMode: normalized.chatMode,
+          },
+        }),
+      )
+    },
+    [conversationId],
+  )
+
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -174,6 +266,18 @@ function ChatPanelChat({
             ...body,
             messages: Array.isArray(body?.messages) ? body.messages : messages,
             id: conversationId,
+            selectedDataSourceId:
+              localSelectionRef.current.selectedDataSourceId || undefined,
+            selectedKnowledgeBaseId:
+              localSelectionRef.current.selectedKnowledgeBaseId || undefined,
+            chatMode: localSelectionRef.current.chatMode,
+            requestContext: {
+              selectedDataSourceId:
+                localSelectionRef.current.selectedDataSourceId || undefined,
+              selectedKnowledgeBaseId:
+                localSelectionRef.current.selectedKnowledgeBaseId || undefined,
+              chatMode: localSelectionRef.current.chatMode,
+            },
             memory: {
               thread: conversationId,
               resource: mastraResourceId,
@@ -194,6 +298,11 @@ function ChatPanelChat({
   onMessagesChangeRef.current = onMessagesChange
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const messagesSnapshotRef = useRef<UIMessage[]>(initialMessages)
+  const lastPersistedDisplayRef = useRef(
+    messagesDisplaySignature(initialMessages),
+  )
+  const conversationIdRef = useRef(conversationId)
+  conversationIdRef.current = conversationId
 
   const flushPersist = useCallback((immediate: boolean) => {
     if (!onMessagesChangeRef.current || messagesSnapshotRef.current.length === 0) {
@@ -203,8 +312,18 @@ function ChatPanelChat({
       clearTimeout(persistTimerRef.current)
       persistTimerRef.current = null
     }
+    const persistConversationId = conversationIdRef.current
     const run = () => {
-      void onMessagesChangeRef.current?.(messagesSnapshotRef.current)
+      const snapshot = messagesSnapshotRef.current
+      const displaySignature = messagesDisplaySignature(snapshot)
+      if (displaySignature === lastPersistedDisplayRef.current) {
+        return
+      }
+      lastPersistedDisplayRef.current = displaySignature
+      void onMessagesChangeRef.current?.(
+        persistConversationId,
+        snapshot,
+      )
     }
     if (immediate) {
       run()
@@ -224,6 +343,51 @@ function ChatPanelChat({
   })
 
   messagesSnapshotRef.current = messages
+  const stopRef = useRef(stop)
+  stopRef.current = stop
+
+  useEffect(() => {
+    if (!liveMessagesUpdaterRef) return
+    liveMessagesUpdaterRef.current = (sourceConversationId, next) => {
+      if (
+        !shouldApplyConversationUpdate(
+          sourceConversationId,
+          conversationIdRef.current,
+        )
+      ) {
+        return
+      }
+      messagesSnapshotRef.current = next
+      setMessages(next)
+    }
+    return () => {
+      liveMessagesUpdaterRef.current = null
+    }
+  }, [liveMessagesUpdaterRef, setMessages])
+
+  useEffect(() => {
+    return () => {
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current)
+        persistTimerRef.current = null
+      }
+      if (messagesSnapshotRef.current.length > 0) {
+        onMessagesChangeRef.current?.(
+          conversationIdRef.current,
+          messagesSnapshotRef.current,
+        )
+      }
+      stopRef.current()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!persistFlushRef) return
+    persistFlushRef.current = () => flushPersist(true)
+    return () => {
+      persistFlushRef.current = null
+    }
+  }, [persistFlushRef, flushPersist])
 
   useEffect(() => {
     onLiveMessagesChange?.(conversationId, messages)
@@ -304,6 +468,15 @@ function ChatPanelChat({
       'suspended'
     )
   }, [workflowSuspended, lastWorkflowMessageId, messages, pendingApproval])
+
+  useChatHeartbeat({
+    messages,
+    status,
+    workflowSuspended: effectiveWorkflowSuspended || Boolean(pendingApproval),
+    sendMessage,
+    stop,
+    setMessages,
+  })
 
   const syncedSuspendRunIdRef = useRef<string | null>(null)
   const [workflowResumeBusy, setWorkflowResumeBusy] = useState(false)
@@ -484,9 +657,10 @@ function ChatPanelChat({
 
   useEffect(() => {
     if (messages.length === 0) return
-    const streaming = status === 'streaming' || status === 'submitted'
-    flushPersist(!streaming)
-  }, [messages, status, flushPersist])
+    // 消息变更一律防抖落库。agent resume 走 setMessages 时 status 仍是 ready，
+    // 若这里 immediate 会把每个流式 chunk 打成一次 PATCH。
+    flushPersist(false)
+  }, [messages, flushPersist])
 
   useLayoutEffect(() => {
     isAtBottomRef.current = true
@@ -511,6 +685,10 @@ function ChatPanelChat({
   }, [updateScrollState, conversationId])
 
   const isLoading = status === 'streaming' || status === 'submitted'
+  const lastAssistantId = useMemo(
+    () => findLastAssistantMessageId(messages),
+    [messages],
+  )
 
   useEffect(() => {
     if (status !== 'streaming') return
@@ -577,6 +755,7 @@ function ChatPanelChat({
                   part.type !== 'step-start' &&
                   part.type !== 'data-tool-agent' &&
                   part.type !== 'data-tool-call-suspended' &&
+                  part.type !== 'data-heartbeat' &&
                   !isWorkflowDataPartType(part.type),
               )
               const hasTextPart = contentParts.some(
@@ -623,11 +802,17 @@ function ChatPanelChat({
                 ...message.parts.filter((part) => part.type === 'data-tool-agent'),
               ]
 
+              const isLiveAssistant = isLiveAssistantMessage(
+                status,
+                message.id,
+                lastAssistantId,
+              )
+
               return (
                 <motion.div
                   key={message.id}
                   variants={slideUp}
-                  initial="hidden"
+                  initial={getAssistantMotionInitial(isLiveAssistant)}
                   animate="visible"
                   className="flex justify-start"
                 >
@@ -659,46 +844,37 @@ function ChatPanelChat({
                       />
                     )}
 
-                    {toolParts.map((part, index) => {
-                      if (!part.type?.startsWith('tool-')) return null
-                      if (part.type.startsWith('tool-workflow') && showWorkflowProgress) {
-                        return null
-                      }
-                      const rawName = part.type.replace('tool-', '')
-                      const toolName = DELEGATION_LABELS[rawName] ?? rawName
-                      const toolPart = part as {
-                        type: string
-                        toolCallId: string
-                        state:
-                          | 'input-streaming'
-                          | 'input-available'
-                          | 'output-available'
-                          | 'output-error'
-                        errorText?: string
-                      }
-                      return (
-                        <div key={toolPart.toolCallId ?? index} className="my-2">
-                          <ToolStatusBadge
-                            toolName={toolName}
-                            state={toolPart.state}
-                          />
-                          {toolPart.state === 'output-error' &&
-                            toolPart.errorText && (
-                              <div className="mt-1 rounded border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                                {formatToolErrorMessage({
-                                  toolName,
-                                  errorText: toolPart.errorText,
-                                })}
-                              </div>
-                            )}
-                        </div>
-                      )
-                    })}
+                    <ToolCallsPanel
+                      toolParts={toolParts as never}
+                      delegationLabels={DELEGATION_LABELS}
+                      showWorkflowProgress={Boolean(showWorkflowProgress)}
+                      isLive={isLiveAssistant}
+                    />
 
                     <AssistantMessageContent
                       parts={presentationParts as never}
-                      isStreaming={status === 'streaming'}
+                      isStreaming={isLiveAssistant}
                     />
+                  </div>
+                </motion.div>
+              )
+            }
+
+            if (isHeartbeatUserMessage(message)) {
+              return (
+                <motion.div
+                  key={message.id}
+                  variants={slideUp}
+                  initial={false}
+                  animate="visible"
+                  className="flex justify-center"
+                >
+                  <div className="inline-flex items-center gap-2 rounded-full border border-neon-green/35 bg-neon-green/10 px-3 py-1 text-[11px] font-medium tracking-[0.14em] text-neon-green uppercase">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-neon-green/70" />
+                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-neon-green" />
+                    </span>
+                    心跳续跑 · 自动推进
                   </div>
                 </motion.div>
               )
@@ -708,7 +884,7 @@ function ChatPanelChat({
             <motion.div
               key={message.id}
               variants={slideUp}
-              initial="hidden"
+              initial={messages.at(-1)?.id === message.id ? 'hidden' : false}
               animate="visible"
               className={cn(
                 'flex',
@@ -765,45 +941,21 @@ function ChatPanelChat({
         )}
       </AnimatePresence>
 
-      <form
+      <ChatComposer
+        value={localSelection}
+        disabled={isLoading || effectiveWorkflowSuspended}
+        isLoading={isLoading}
+        input={input}
+        placeholder={
+          effectiveWorkflowSuspended
+            ? '有待审批的 SQL，请先在上方处理…'
+            : '请输入您的问题…'
+        }
+        onInputChange={setInput}
+        onChange={persistSelection}
         onSubmit={handleSubmit}
-        className="border-t border-border bg-card p-4 shadow-[0_-4px_24px_-8px_oklch(0_0_0_/_20%)] dark:shadow-[0_-1px_0_0_var(--sidebar-border),0_-8px_32px_-8px_oklch(0_0_0_/_40%)]"
-      >
-        <div className="flex gap-2">
-          <Input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={
-              effectiveWorkflowSuspended
-                ? '有待审批的 SQL，请先在上方处理…'
-                : '输入消息...'
-            }
-            className="flex-1 border-border bg-input focus-visible:ring-primary"
-            disabled={isLoading || effectiveWorkflowSuspended}
-          />
-          {isLoading ? (
-            <Button
-              type="button"
-              onClick={stop}
-              variant="destructive"
-              size="icon"
-              className="shrink-0"
-            >
-              <Square className="h-4 w-4" />
-            </Button>
-          ) : (
-            <Button
-              type="submit"
-              disabled={!input.trim() || effectiveWorkflowSuspended}
-              className="shrink-0 bg-primary text-primary-foreground shadow-[0_0_8px_var(--neon-cyan-glow)] hover:bg-primary/90"
-              size="icon"
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      </form>
+        onStop={stop}
+      />
     </div>
   )
 }

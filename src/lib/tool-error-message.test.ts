@@ -15,6 +15,14 @@ test('formats raw delegated agent JSON error as a friendly message', () => {
   )
 })
 
+test('keeps heartbeat timeout text instead of generic hundun message', () => {
+  const message = formatToolErrorMessage({
+    toolName: '混沌 · 上下文支撑',
+    errorText: '执行超时，已由心跳续跑自动推进',
+  })
+  assert.equal(message, '执行超时，已由心跳续跑自动推进')
+})
+
 test('does not expose backend JSON for unknown tool errors', () => {
   const message = formatToolErrorMessage({
     toolName: 'unknown-tool',

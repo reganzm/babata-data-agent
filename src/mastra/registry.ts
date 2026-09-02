@@ -4,7 +4,9 @@
 
 import { babataDescription } from './instructions/babata'
 import { chestnutDescription } from './instructions/chestnut'
+import { daxDescription } from './instructions/dax'
 import { hundunDescription } from './instructions/hundun'
+import { jujuDescription } from './instructions/juju'
 import { ximoDescription } from './instructions/ximo'
 import { routingDecisionTable } from './instructions/routing'
 
@@ -50,6 +52,18 @@ export const agentRegistry = {
     description: hundunDescription,
     delegatePrimitiveId: 'hundun',
   },
+  juju: {
+    id: 'juju',
+    name: '巨斧',
+    description: jujuDescription,
+    delegatePrimitiveId: 'juju',
+  },
+  dax: {
+    id: 'dax',
+    name: '达克斯',
+    description: daxDescription,
+    delegatePrimitiveId: 'dax',
+  },
 } as const satisfies Record<string, AgentRegistryEntry>
 
 export const workflowRegistry = {
@@ -87,7 +101,7 @@ function buildWorkflowRoutingSection(): string {
 
 /** 由注册表生成巴巴塔 system instructions */
 export function buildBabataInstructions(): string {
-  const subAgents = [agentRegistry.ximo, agentRegistry.chestnut, agentRegistry.hundun]
+  const subAgents = [agentRegistry.ximo, agentRegistry.chestnut, agentRegistry.hundun, agentRegistry.juju, agentRegistry.dax]
     .map((a) => `- **${a.name}**（${a.id}）：${a.description}`)
     .join('\n')
 
@@ -112,11 +126,13 @@ ${buildWorkflowRoutingSection()}
 
 ## 调用子 Agent 工具（重要）
 - 普通委派西莫（ximo）或小栗子（chestnut）时，只传 prompt、threadId、resourceId、instructions、maxSteps 等必要字段。
-- 需要查指标口径、字段含义、表含义、数据血缘、RAG 知识库、源 SQL 或源码线索时，优先委派混沌（hundun）收集上下文证据包。
-- 查数类需求默认委派西莫；西莫缺少表名、维度、指标、时间范围时，直接文本追问用户，让用户下一条回复进入同一会话上下文后再继续委派西莫。
+- 凡涉及问数、查数：必须先委派混沌（hundun）收集 RAG 上下文证据包，再委派西莫（ximo）；委派西莫时必须在 prompt 中完整附上混沌证据包，禁止跳过混沌直接西莫。
+- 仅需口径、字段含义、表含义、RAG 知识库且不要求出数时，只委派混沌。
+- 西莫缺少表名、维度、指标、时间范围时，由西莫结合证据包直接文本追问用户；用户下一条回复进入同一会话上下文后再继续委派西莫。
 - 西莫澄清不要启动 data-analysis-report，也不要唤起 workflow 澄清弹窗。
 - suspendedToolRunId 仅用于恢复“真实处于 suspended 的子 Agent 工具调用”；如果没有从系统消息中拿到非空 runId，必须省略该字段。
 - 不要传 null、"null"、undefined、空字符串作为 suspendedToolRunId；这些值会触发错误的 resumeStream 分支。
+- 新委派混沌/西莫/小栗子（含规范化确认之后的首次委派）时：只传 prompt 等必要字段，禁止带 resumeData / suspendedToolRunId。confirm-normalized-query 的确认结果不是子 Agent 的 resumeData。
 
 ${routingDecisionTable}
 
@@ -145,6 +161,12 @@ export function getDelegationLabel(primitiveId: string): string | undefined {
   }
   if (normalized === 'hundun' || primitiveId.includes('hundun')) {
     return agentRegistry.hundun.name
+  }
+  if (normalized === 'juju' || primitiveId.includes('juju')) {
+    return agentRegistry.juju.name
+  }
+  if (normalized === 'dax' || primitiveId.includes('dax')) {
+    return agentRegistry.dax.name
   }
   for (const w of Object.values(workflowRegistry)) {
     if (

@@ -78,11 +78,19 @@ test('buildEChartsOption enlarges typography and plot area in fullscreen mode', 
 
   assert.equal((normal.textStyle as { fontSize: number }).fontSize, 12)
   const normalSeries = normal.series as Array<{
-    lineStyle?: { width: number }
+    showSymbol?: boolean
+    emphasis?: { focus: string; showSymbol?: boolean; lineStyle?: { color: string } }
+    lineStyle?: { width: number; opacity: number; color: string }
     symbolSize?: number
   }>
-  assert.equal(normalSeries[0].lineStyle, undefined)
-  assert.equal(normalSeries[0].symbolSize, undefined)
+  assert.equal(normalSeries[0].showSymbol, false)
+  assert.equal(normalSeries[0].lineStyle?.width, 2)
+  assert.equal(normalSeries[0].lineStyle?.opacity, 1)
+  assert.equal(normalSeries[0].lineStyle?.color, '#2dd4bf')
+  assert.equal(normalSeries[0].emphasis?.focus, 'none')
+  assert.equal(normalSeries[0].emphasis?.showSymbol, true)
+  assert.equal(normalSeries[0].emphasis?.lineStyle?.color, '#2dd4bf')
+  assert.equal(normalSeries[0].symbolSize, 7)
 
   assert.equal((fullscreen.textStyle as { fontSize: number }).fontSize, 15)
   assert.deepEqual((fullscreen.tooltip as { padding: number[] }).padding, [
@@ -105,7 +113,99 @@ test('buildEChartsOption enlarges typography and plot area in fullscreen mode', 
     symbolSize?: number
   }>
   assert.equal(series[0].lineStyle?.width, 3)
-  assert.equal(series[0].symbolSize, 8)
+  assert.equal(series[0].symbolSize, 9)
+  assert.equal(series[0].emphasis?.showSymbol, true)
+})
+
+test('buildEChartsOption uses item tooltip for pie charts', () => {
+  const pieSpec: ChartSpec = {
+    id: 'chart-pie',
+    type: 'pie',
+    title: 'Transaction Count构成',
+    encoding: {
+      x: { field: 'store_name' },
+      value: { field: 'transaction_count' },
+    },
+    data: [
+      { store_name: 'MT北京SKP店', transaction_count: 120 },
+      { store_name: 'MT上海国金中心店', transaction_count: 98 },
+    ],
+  }
+
+  const option = buildEChartsOption(pieSpec)
+  const tooltip = option.tooltip as {
+    trigger: string
+    formatter?: (params: unknown) => string
+  }
+  const series = option.series as Array<{
+    data: Array<{ itemStyle?: { color?: string } }>
+  }>
+
+  assert.equal(tooltip.trigger, 'item')
+  assert.match(
+    tooltip.formatter?.({
+      name: 'MT北京SKP店',
+      value: 120,
+      percent: 55.05,
+    }) ?? '',
+    /MT北京SKP店/,
+  )
+  assert.match(
+    tooltip.formatter?.({
+      name: 'MT北京SKP店',
+      value: 120,
+      percent: 55.05,
+    }) ?? '',
+    /120/,
+  )
+  assert.equal(series[0].data[0].itemStyle?.color, DEFAULT_CHART_THEME.palette[0])
+  assert.equal(series[0].data[0].emphasis?.itemStyle?.color, DEFAULT_CHART_THEME.palette[0])
+})
+
+test('buildEChartsOption keeps bar and pie colors on hover states', () => {
+  const barSpec: ChartSpec = {
+    id: 'chart-bar',
+    type: 'bar',
+    title: 'Member Count对比',
+    encoding: {
+      x: { field: 'store_name' },
+      y: { field: 'member_count' },
+    },
+    data: [
+      { store_name: 'MT上海国金中心店', member_count: 4 },
+      { store_name: 'MT北京SKP店', member_count: 3 },
+    ],
+  }
+  const barOption = buildEChartsOption(barSpec)
+  const barSeries = barOption.series as Array<{
+    emphasis?: { focus: string; itemStyle?: { color: string } }
+    itemStyle?: { color: string }
+  }>
+  assert.equal(barSeries[0].itemStyle?.color, '#2dd4bf')
+  assert.equal(barSeries[0].emphasis?.focus, 'none')
+  assert.equal(barSeries[0].emphasis?.itemStyle?.color, '#2dd4bf')
+
+  const pieSpec: ChartSpec = {
+    id: 'chart-pie',
+    type: 'pie',
+    title: 'Member Count构成',
+    encoding: {
+      x: { field: 'tier' },
+      value: { field: 'member_count' },
+    },
+    data: [
+      { tier: '金牌', member_count: 120 },
+      { tier: '银牌', member_count: 98 },
+    ],
+  }
+  const pieOption = buildEChartsOption(pieSpec)
+  const pieSeries = pieOption.series as Array<{
+    emphasis?: { focus: string }
+    data: Array<{ emphasis?: { itemStyle?: { color: string } }; itemStyle?: { color: string } }>
+  }>
+  assert.equal(pieSeries[0].emphasis?.focus, 'none')
+  assert.equal(pieSeries[0].data[0].itemStyle?.color, '#2dd4bf')
+  assert.equal(pieSeries[0].data[0].emphasis?.itemStyle?.color, '#2dd4bf')
 })
 
 test('buildTableEChartsOption adds tooltip only for truncated table text', () => {

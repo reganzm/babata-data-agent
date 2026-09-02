@@ -1,12 +1,20 @@
 import { resolve } from 'node:path'
 
-export type SkillAgentId = 'babata' | 'ximo' | 'hundun' | 'chestnut'
+export type SkillAgentId =
+  | 'babata'
+  | 'ximo'
+  | 'hundun'
+  | 'chestnut'
+  | 'juju'
+  | 'dax'
 
 export const SKILL_AGENT_IDS: SkillAgentId[] = [
   'babata',
   'ximo',
   'hundun',
   'chestnut',
+  'juju',
+  'dax',
 ]
 
 export type AgentSkillsConfig = {

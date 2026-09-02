@@ -3,9 +3,18 @@ import type { NextRequest } from 'next/server'
 import { isAuthDisabled } from '@/lib/auth/config'
 import { getSessionCookieName, parseSessionToken } from '@/lib/auth/session'
 
-const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/auth/logout']
+const PUBLIC_PATHS = [
+  '/api/auth/login',
+  '/api/auth/logout',
+  '/api/auth/session',
+]
+
+function isLoginPath(pathname: string): boolean {
+  return pathname === '/login' || pathname.startsWith('/login/')
+}
 
 function isPublicPath(pathname: string): boolean {
+  if (isLoginPath(pathname)) return false
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
     return true
   }
@@ -30,7 +39,7 @@ export async function middleware(request: NextRequest) {
   const token = request.cookies.get(getSessionCookieName())?.value
   const session = await parseSessionToken(token)
 
-  if (pathname === '/login') {
+  if (isLoginPath(pathname)) {
     if (session) {
       return NextResponse.redirect(new URL('/', request.url))
     }

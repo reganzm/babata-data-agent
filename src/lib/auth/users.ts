@@ -116,3 +116,46 @@ export async function countUsers(): Promise<number> {
   const row = result.rows[0] as unknown as { c: number } | undefined
   return Number(row?.c ?? 0)
 }
+
+export async function listUsers(): Promise<AuthUser[]> {
+  await ensureSchema()
+  const db = getDbClient()
+  const result = await db.execute(`
+    SELECT id, username, created_at
+    FROM babata_users
+    ORDER BY created_at ASC
+  `)
+  return (result.rows as unknown as UserRow[]).map((row) => ({
+    id: row.id,
+    username: row.username,
+    createdAt: row.created_at,
+  }))
+}
+
+export async function updateUserPasswordById(
+  userId: string,
+  newPlainPassword: string,
+): Promise<AuthUser> {
+  await ensureSchema()
+  if (newPlainPassword.length < 6) {
+    throw new Error('密码至少 6 位')
+  }
+  const user = await findUserById(userId)
+  if (!user) throw new Error('用户不存在')
+  const db = getDbClient()
+  await db.execute({
+    sql: `UPDATE babata_users SET password_hash = ? WHERE id = ?`,
+    args: [hashPassword(newPlainPassword), userId],
+  })
+  return user
+}
+
+export async function deleteUser(userId: string): Promise<boolean> {
+  await ensureSchema()
+  const db = getDbClient()
+  const result = await db.execute({
+    sql: `DELETE FROM babata_users WHERE id = ?`,
+    args: [userId],
+  })
+  return (result.rowsAffected ?? 0) > 0
+}

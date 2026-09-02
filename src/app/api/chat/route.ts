@@ -14,9 +14,25 @@ import {
   isConversationWorkflowSuspended,
   wrapStreamWithWorkflowMetadataSync,
 } from '@/lib/workflow-stream-metadata'
+import { wrapSseBodyWithHeartbeat } from '@/lib/chat-stream-heartbeat'
+import {
+  extractDaxSelection,
+  resolveChatAgentId,
+} from '@/lib/dax-routing'
+import {
+  buildPrefetchedKnowledgeInstructionBlock,
+  prefetchDaxKnowledgeContext,
+  resolveDaxKnowledgeBaseIds,
+} from '@/lib/dax-knowledge-context'
+import { extractChatMode } from '@/lib/chat-composer-state'
+import { runWithDaxRuntime } from '@/lib/dax-runtime-context'
+import {
+  buildMastraRequestContext,
+  requestContextForLog,
+} from '@/lib/mastra-request-context'
 import { mastra } from '@/mastra'
 
-export const maxDuration = 60
+export const maxDuration = 180
 
 const WORKFLOW_KEYS: Record<string, 'dataAnalysisReport' | 'weeklyMetrics'> = {
   'data-analysis-report': 'dataAnalysisReport',
@@ -114,7 +130,11 @@ export async function POST(req: Request) {
 
     if (params.memory?.thread ?? params.id) {
       const existing = await getConversationById(conversationId, session.userId)
-      if (isConversationWorkflowSuspended(existing?.metadata)) {
+      const isToolResume =
+        params.resumeData !== undefined &&
+        typeof params.runId === 'string' &&
+        Boolean(params.runId.trim())
+      if (isConversationWorkflowSuspended(existing?.metadata) && !isToolResume) {
         const runId = existing?.metadata?.activeWorkflowRunId
         const workflowId = existing?.metadata?.pendingApproval?.workflowId
         const workflowKey = WORKFLOW_KEYS[workflowId ?? 'data-analysis-report']
@@ -179,38 +199,102 @@ export async function POST(req: Request) {
       requestContext,
     } = params
 
+    const selection = extractDaxSelection({
+      ...params,
+      requestContext,
+    })
+    const agentId = resolveChatAgentId(selection)
     const normalizedMessages = sanitizeMessages(messages)
+    const lastUserText = extractLastUserText(normalizedMessages)
+
+    const chatMode = extractChatMode({
+      ...params,
+      requestContext,
+    })
+
+    let boundKnowledgeBaseIds: string[] = []
+    let prefetchedKnowledgeContext = ''
+    if (agentId === 'dax' && resumeData === undefined) {
+      try {
+        const prefetched = await prefetchDaxKnowledgeContext({
+          selection,
+          userId: session.userId,
+          query: lastUserText,
+        })
+        boundKnowledgeBaseIds = prefetched.knowledgeBaseIds
+        prefetchedKnowledgeContext = buildPrefetchedKnowledgeInstructionBlock({
+          knowledgeBaseIds: prefetched.knowledgeBaseIds,
+          prefetchedKnowledgeContext: prefetched.prefetchedKnowledgeContext,
+        })
+        if (shouldLogLlmDebug()) {
+          console.info('[llm-debug] api-chat:dax-knowledge-prefetch', {
+            conversationId,
+            boundKnowledgeBaseIds,
+            parentCount: prefetched.parentCount,
+            hasPrefetchedBlock: Boolean(prefetched.prefetchedKnowledgeContext.trim()),
+          })
+        }
+      } catch (error) {
+        console.error('[POST /api/chat] dax knowledge prefetch failed', error)
+        if (selection.selectedKnowledgeBaseId?.trim()) {
+          boundKnowledgeBaseIds = [selection.selectedKnowledgeBaseId.trim()]
+        } else if (selection.selectedDataSourceId?.trim()) {
+          boundKnowledgeBaseIds = await resolveDaxKnowledgeBaseIds(
+            selection,
+            session.userId,
+          )
+        }
+      }
+    }
+
+    const daxRuntime = {
+      userId: session.userId,
+      conversationId,
+      selectedDataSourceId: selection.selectedDataSourceId,
+      selectedKnowledgeBaseId: selection.selectedKnowledgeBaseId,
+      boundKnowledgeBaseIds,
+      prefetchedKnowledgeContext,
+      chatMode,
+    }
+    const mergedRequestContext = buildMastraRequestContext(
+      requestContext,
+      daxRuntime,
+    )
+
     if (shouldLogLlmDebug()) {
       console.info('[llm-debug] api-chat:request', {
         conversationId,
         trigger,
         runId: runId ?? null,
-        requestContext: requestContext ?? null,
+        requestContext: requestContextForLog(mergedRequestContext),
+        agentId,
         messageCount: normalizedMessages.length,
         lastUserText: extractLastUserText(normalizedMessages),
       })
     }
 
-    const stream = await handleChatStream({
-      mastra,
-      agentId: 'babata',
-      version: 'v6',
-      params: {
-        messages: normalizedMessages,
-        trigger,
-        resumeData,
-        runId,
-        requestContext,
-        memory: {
-          thread: conversationId,
-          resource:
-            params.memory?.resource ??
-            (session.userId
-              ? resourceIdForUser(session.userId)
-              : process.env.BABATA_RESOURCE_ID?.trim() || 'babata-local-user'),
-        },
-      } as never,
-    })
+    const stream = await runWithDaxRuntime(daxRuntime, () =>
+      handleChatStream({
+        mastra,
+        agentId,
+        version: 'v6',
+        params: {
+          messages: normalizedMessages,
+          trigger,
+          resumeData,
+          runId,
+          requestContext: mergedRequestContext,
+          memory: {
+            thread: conversationId,
+            resource:
+              params.memory?.resource ??
+              (session.userId
+                ? resourceIdForUser(session.userId)
+                : process.env.BABATA_RESOURCE_ID?.trim() || 'babata-local-user'),
+          },
+        } as never,
+      }),
+    )
 
     if (shouldLogLlmDebug()) {
       console.info('[llm-debug] api-chat:stream-started', {
@@ -228,8 +312,13 @@ export async function POST(req: Request) {
           )
         : (stream as ReadableStream<UIMessageChunk>)
 
-    return createUIMessageStreamResponse({
+    const response = createUIMessageStreamResponse({
       stream: toAbortSafeStream(synced),
+    })
+    if (!response.body) return response
+    return new Response(wrapSseBodyWithHeartbeat(response.body), {
+      status: response.status,
+      headers: response.headers,
     })
   } catch (error) {
     console.error('[POST /api/chat]', error)

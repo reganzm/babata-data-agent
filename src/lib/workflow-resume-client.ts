@@ -1,8 +1,10 @@
 import type { UIMessage } from '@ai-sdk/react'
-import { readUIMessageStream, type UIMessageChunk } from 'ai'
+import { readUIMessageStream } from 'ai'
 import { clearPendingApprovalOnClient } from '@/lib/workflow-pending-approval-client'
+import { createUiMessageChunkStream } from '@/lib/ui-message-chunk-stream'
 import { consumeWorkflowResumeStream } from '@/lib/workflow-stream-merge'
 import type { WorkflowResumeContext } from '@/lib/workflow-progress'
+import { resolveWorkflowResumePath } from '@/lib/workflow-resume-path'
 import type { UserClarificationPayload } from '@/lib/sql-clarification'
 
 export type ResumeSqlApprovalParams = {
@@ -24,7 +26,7 @@ function buildResumeData(approved: boolean, feedback?: string) {
   }
 }
 
-async function consumeAgentResumeStream(
+export async function consumeAgentResumeStream(
   response: Response,
   messages: UIMessage[],
   onMessagesUpdate: (messages: UIMessage[]) => void,
@@ -37,7 +39,8 @@ async function consumeAgentResumeStream(
   const baseMessage =
     lastAssistantIndex >= 0 ? messages[lastAssistantIndex] : undefined
 
-  const stream = response.body as unknown as ReadableStream<UIMessageChunk>
+  // 必须先把 SSE 解析成 UIMessageChunk，再交给 readUIMessageStream
+  const stream = createUiMessageChunkStream(response.body)
 
   for await (const updated of readUIMessageStream({
     message: baseMessage,
@@ -118,7 +121,10 @@ async function resumeViaAgentChat(params: ResumeSqlApprovalParams): Promise<void
     body: JSON.stringify({
       messages: params.messages,
       runId: agentRunId,
-      resumeData: buildResumeData(params.approved, params.feedback),
+      resumeData: {
+        ...buildResumeData(params.approved, params.feedback),
+        ...(params.extraResumeData ?? {}),
+      },
       memory: {
         thread: params.conversationId,
         resource: params.mastraResourceId,
@@ -131,19 +137,20 @@ async function resumeViaAgentChat(params: ResumeSqlApprovalParams): Promise<void
     throw new Error(data.error ?? `恢复对话失败 (${response.status})`)
   }
 
+  await clearPendingApprovalOnClient(params.conversationId).catch((err) => {
+    console.error('[clear-pending]', err)
+  })
+
   await consumeAgentResumeStream(response, params.messages, params.onMessagesUpdate)
 }
 
 export async function resumeAfterSqlApproval(
   params: ResumeSqlApprovalParams,
 ): Promise<void> {
-  if (params.context.workflowRunId) {
+  const path = resolveWorkflowResumePath(params.context)
+  if (path === 'workflow') {
     await resumeViaWorkflowEndpoint(params)
     return
   }
-  if (params.context.agentRunId) {
-    await resumeViaAgentChat(params)
-    return
-  }
-  throw new Error('缺少 workflowRunId，无法恢复审批流程')
+  await resumeViaAgentChat(params)
 }

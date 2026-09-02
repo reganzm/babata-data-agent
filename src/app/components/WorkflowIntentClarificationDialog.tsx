@@ -38,7 +38,7 @@ interface WorkflowIntentClarificationDialogProps {
   mastraResourceId: string
   pendingApproval?: ConversationMetadata['pendingApproval']
   onResolved?: () => void
-  onMessagesUpdate?: (messages: UIMessage[]) => void
+  onMessagesUpdate?: (conversationId: string, messages: UIMessage[]) => void
 }
 
 export function WorkflowIntentClarificationDialog({
@@ -221,7 +221,7 @@ export function WorkflowIntentClarificationDialog({
           agentRunId: effectivePendingApproval.agentRunId ?? null,
           sql: '',
         },
-        onMessagesUpdate: (next) => onMessagesUpdate?.(next),
+        onMessagesUpdate: (next) => onMessagesUpdate?.(conversationId, next),
       })
       console.info('[intent-clarification] submit success', {
         workflowRunId: effectivePendingApproval.workflowRunId ?? null,

@@ -1,0 +1,21 @@
+---
+description: babata Superpowers 团队工作流规范
+alwaysApply: true
+---
+
+# Superpowers 团队工作流规范
+
+在 `babata` 中新增或修改功能时，按以下顺序执行，并在每一步给出简短结果：
+
+1. 先用 `/superpowers:brainstorming` 明确需求边界、输入输出、失败场景、验收标准。
+2. 再用 `/superpowers:writing-plans` 产出可执行的分步计划，并标注影响文件与测试策略。
+3. 按 `/superpowers:test-driven-development` 先写或补测试，再实现代码。
+4. 若遇到错误或测试失败，使用 `/superpowers:systematic-debugging` 先定位根因，再修复。
+5. 完成后执行 `/superpowers:verification-before-completion`，提供可核验的命令与结果摘要。
+6. 最后执行 `/superpowers:requesting-code-review`，列出潜在风险与后续建议。
+
+## 约束
+
+- 不要跳过测试。
+- 不要在未确认根因前直接猜测式修复。
+- 变更尽量小步提交，说明每步目的与影响范围。

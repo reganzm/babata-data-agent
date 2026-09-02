@@ -214,7 +214,7 @@ export function formatSqlForDisplay(sql: string): string {
 function assertReadQueryShape(normalized: string): void {
   if (!/^(WITH\b[\s\S]*\bSELECT\b|SELECT\b)/i.test(normalized)) {
     throw new Error(
-      '仅允许单条只读查询（SELECT / 子查询 / WITH AS / UNION，不可含分号分隔的多语句）',
+      '仅允许单条只读查询（WITH/CTE + SELECT，含子查询与 UNION；不可含分号分隔的多语句）',
     )
   }
 

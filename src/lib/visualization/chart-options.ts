@@ -1,5 +1,6 @@
 import { sanitizeTableCellText } from '@/lib/text/emoji-limit'
-import { formatCellValue, toNumeric } from './infer-columns'
+import { normalizeChartColor, normalizeChartPalette } from './chart-color'
+import { formatCellValue, formatNumber, toNumeric } from './infer-columns'
 import type { ChartSpec, MetricCard, TableSpec } from './types'
 
 export interface ChartThemeColors {
@@ -21,14 +22,14 @@ export const DEFAULT_CHART_THEME: ChartThemeColors = {
   tableHeader: 'oklch(0.27 0.016 260)',
   tableStripe: 'oklch(0.24 0.014 260 / 55%)',
   tableRowLine: 'oklch(0.34 0.018 260 / 45%)',
-  palette: [
+  palette: normalizeChartPalette([
     'oklch(0.78 0.14 185)',
     'oklch(0.76 0.16 155)',
     'oklch(0.70 0.15 260)',
     'oklch(0.80 0.16 85)',
     'oklch(0.65 0.2 25)',
     'oklch(0.72 0.12 320)',
-  ],
+  ]),
 }
 
 const LINEAGE_OUTER_NODE_FILL = '#f9a8d4'
@@ -36,6 +37,28 @@ const LINEAGE_OUTER_NODE_BORDER = '#f472b6'
 
 export type ChartOptionBuildMode = {
   fullscreen?: boolean
+}
+
+function tooltipTriggerForChart(type: ChartSpec['type']): 'item' | 'axis' {
+  if (type === 'heatmap' || type === 'pie' || type === 'funnel' || type === 'graph') {
+    return 'item'
+  }
+  return 'axis'
+}
+
+function pieTooltipFormatter(params: unknown): string {
+  const items = Array.isArray(params) ? params : [params]
+  return items
+    .map((item) => {
+      const point = item as { name?: string; value?: number; percent?: number }
+      const value = formatNumber(point.value ?? 0)
+      const percent =
+        typeof point.percent === 'number' && Number.isFinite(point.percent)
+          ? point.percent.toFixed(1)
+          : '0.0'
+      return `${point.name ?? '—'}<br/>${value} (${percent}%)`
+    })
+    .join('<br/><br/>')
 }
 
 function yFields(spec: ChartSpec): string[] {
@@ -66,6 +89,121 @@ function formatCategoryLabel(field: string, value: unknown): string {
   return raw
 }
 
+function barSeriesInteractionOptions(color: string): {
+  emphasis: {
+    focus: 'none'
+    itemStyle: { color: string; opacity: number }
+  }
+  blur: {
+    itemStyle: { color: string; opacity: number }
+  }
+  itemStyle: { color: string }
+} {
+  const seriesColor = normalizeChartColor(color)
+  return {
+    itemStyle: { color: seriesColor },
+    emphasis: {
+      focus: 'none',
+      itemStyle: { color: seriesColor, opacity: 1 },
+    },
+    blur: {
+      itemStyle: { color: seriesColor, opacity: 0.75 },
+    },
+  }
+}
+
+function pieSliceStates(color: string, borderColor: string): {
+  itemStyle: { color: string; borderColor: string; borderWidth: number }
+  emphasis: { itemStyle: { color: string; borderColor: string; borderWidth: number; opacity: number } }
+  blur: { itemStyle: { color: string; borderColor: string; opacity: number } }
+} {
+  const sliceColor = normalizeChartColor(color)
+  const sliceBorder = normalizeChartColor(borderColor)
+  return {
+    itemStyle: { color: sliceColor, borderColor: sliceBorder, borderWidth: 1 },
+    emphasis: {
+      itemStyle: {
+        color: sliceColor,
+        borderColor: sliceBorder,
+        borderWidth: 2,
+        opacity: 1,
+      },
+    },
+    blur: {
+      itemStyle: {
+        color: sliceColor,
+        borderColor: sliceBorder,
+        opacity: 0.75,
+      },
+    },
+  }
+}
+
+function lineSeriesInteractionOptions(
+  fullscreen: boolean,
+  color: string,
+): {
+  showSymbol: boolean
+  showAllSymbol: boolean
+  connectNulls: boolean
+  symbol: string
+  symbolSize: number
+  itemStyle: { color: string; borderColor: string; borderWidth: number }
+  lineStyle: { width: number; opacity: number; color: string }
+  emphasis: {
+    focus: 'none'
+    scale: boolean
+    showSymbol: boolean
+    symbolSize: number
+    lineStyle: { width: number; opacity: number; color: string }
+    itemStyle: { color: string; borderColor: string; borderWidth: number }
+  }
+  blur: {
+    lineStyle: { opacity: number; color: string }
+    itemStyle: { opacity: number; color: string; borderColor: string }
+  }
+  select: {
+    lineStyle: { opacity: number; color: string }
+  }
+} {
+  const lineWidth = fullscreen ? 3 : 2
+  const seriesColor = normalizeChartColor(color)
+  const hoverSymbolSize = fullscreen ? 9 : 7
+  return {
+    showSymbol: false,
+    showAllSymbol: false,
+    connectNulls: true,
+    symbol: 'circle',
+    symbolSize: hoverSymbolSize,
+    itemStyle: { color: seriesColor, borderColor: seriesColor, borderWidth: 2 },
+    lineStyle: { width: lineWidth, opacity: 1, color: seriesColor },
+    emphasis: {
+      focus: 'none',
+      scale: false,
+      showSymbol: true,
+      symbolSize: hoverSymbolSize,
+      lineStyle: { width: lineWidth, opacity: 1, color: seriesColor },
+      itemStyle: { color: '#ffffff', borderColor: seriesColor, borderWidth: 2 },
+    },
+    blur: {
+      lineStyle: { opacity: 1, color: seriesColor },
+      itemStyle: { opacity: 1, color: seriesColor, borderColor: seriesColor },
+    },
+    select: {
+      lineStyle: { opacity: 1, color: seriesColor },
+    },
+  }
+}
+
+function axisTooltipValueFormatter(value: unknown): string {
+  if (value == null) return '—'
+  if (typeof value === 'number' || typeof value === 'string') {
+    const numeric = toNumeric(value)
+    if (numeric != null) return formatNumber(numeric)
+  }
+  return String(value)
+}
+
 function sortedCategories(spec: ChartSpec, field: string): string[] {
   const cats = categories(spec, field)
   if (/^ds$/i.test(field)) {
@@ -79,36 +217,50 @@ function multiSeriesData(
   xField: string,
   yField: string,
   seriesField: string,
+  palette: string[],
   fullscreen = false,
 ): Array<{
   name: string
   type: string
+  color?: string
   data: number[]
   smooth?: boolean
   showSymbol?: boolean
   symbolSize?: number
-  lineStyle?: { width: number }
+  lineStyle?: { width: number; color?: string }
   barMaxWidth?: number
 }> {
   const xCats = sortedCategories(spec, xField)
   const seriesNames = categories(spec, seriesField)
-  return seriesNames.map((seriesName) => ({
-    name: seriesName,
-    type: spec.type === 'line' ? 'line' : 'bar',
-    smooth: spec.options?.smooth ?? true,
-    showSymbol: spec.data.length <= 24,
-    symbolSize: spec.type === 'line' && fullscreen ? 8 : undefined,
-    lineStyle: spec.type === 'line' && fullscreen ? { width: 3 } : undefined,
-    barMaxWidth: spec.type === 'bar' && fullscreen ? 44 : undefined,
-    data: xCats.map((x) => {
-      const row = spec.data.find(
-        (item) =>
-          String(item[xField] ?? '') === x &&
-          String(item[seriesField] ?? '') === seriesName,
-      )
-      return toNumeric(row ? row[yField] ?? null : null) ?? 0
-    }),
-  }))
+  return seriesNames.map((seriesName, index) => {
+    const color = palette[index % palette.length]
+    const lineInteraction =
+      spec.type === 'line'
+        ? lineSeriesInteractionOptions(fullscreen, color)
+        : null
+    const barInteraction =
+      spec.type === 'bar' ? barSeriesInteractionOptions(color) : null
+    return {
+      name: seriesName,
+      type: spec.type === 'line' ? 'line' : 'bar',
+      color: normalizeChartColor(color),
+      smooth: spec.options?.smooth ?? true,
+      ...(lineInteraction ?? {}),
+      ...(barInteraction ?? {}),
+      ...(barInteraction
+        ? { itemStyle: { ...barInteraction.itemStyle, borderRadius: 0 } }
+        : {}),
+      barMaxWidth: spec.type === 'bar' && fullscreen ? 44 : undefined,
+      data: xCats.map((x) => {
+        const row = spec.data.find(
+          (item) =>
+            String(item[xField] ?? '') === x &&
+            String(item[seriesField] ?? '') === seriesName,
+        )
+        return toNumeric(row ? row[yField] ?? null : null) ?? 0
+      }),
+    }
+  })
 }
 
 function seriesValues(spec: ChartSpec, xField: string, yField: string): number[] {
@@ -129,6 +281,7 @@ export function buildEChartsOption(
   mode: ChartOptionBuildMode = {},
 ): Record<string, unknown> {
   const fullscreen = Boolean(mode.fullscreen)
+  const palette = normalizeChartPalette(theme.palette)
   const textFontSize = fullscreen ? 15 : 12
   const axisFontSize = fullscreen ? 13 : undefined
   const legendFontSize = fullscreen ? 13 : 11
@@ -147,20 +300,22 @@ export function buildEChartsOption(
     containLabel: true,
   }
   const base = {
-    color: theme.palette,
+    color: palette,
     backgroundColor: 'transparent',
+    stateAnimation: { duration: 0 },
     textStyle: {
       color: theme.text,
       fontFamily: 'inherit',
       fontSize: textFontSize,
     },
     tooltip: {
-      trigger: spec.type === 'heatmap' ? 'item' : 'axis',
+      trigger: tooltipTriggerForChart(spec.type),
       backgroundColor: theme.surface,
       borderColor: theme.border,
       borderWidth: 1,
       padding: fullscreen ? [14, 16] : [10, 12],
       textStyle: { color: theme.text, fontSize: tooltipFontSize },
+      confine: true,
       axisPointer: {
         type: 'line',
         lineStyle: { color: theme.border, type: 'dashed' },
@@ -242,8 +397,19 @@ export function buildEChartsOption(
   if (spec.type === 'pie') {
     const nameField = spec.encoding.x?.field ?? spec.encoding.series?.field ?? 'name'
     const valueField = spec.encoding.value?.field ?? yFields(spec)[0]
+    const sliceBorder = normalizeChartColor(theme.border)
+    const pieData = spec.data.map((row, index) => ({
+      name: String(row[nameField] ?? '—'),
+      value: toNumeric(row[valueField]) ?? 0,
+      ...pieSliceStates(palette[index % palette.length], sliceBorder),
+    }))
     return {
       ...base,
+      tooltip: {
+        ...base.tooltip,
+        trigger: 'item',
+        formatter: pieTooltipFormatter,
+      },
       legend: {
         bottom: fullscreen ? 12 : 0,
         textStyle: { color: theme.muted, fontSize: legendFontSize },
@@ -253,12 +419,27 @@ export function buildEChartsOption(
           type: 'pie',
           radius: fullscreen ? ['34%', '62%'] : ['38%', '68%'],
           center: fullscreen ? ['50%', '48%'] : ['50%', '46%'],
-          itemStyle: { borderColor: theme.border, borderWidth: 1 },
-          label: { color: theme.text, fontSize: axisFontSize },
-          data: spec.data.map((row) => ({
-            name: String(row[nameField] ?? '—'),
-            value: toNumeric(row[valueField]) ?? 0,
-          })),
+          minAngle: 4,
+          avoidLabelOverlap: true,
+          label: {
+            color: theme.text,
+            fontSize: axisFontSize,
+            formatter: '{b}',
+          },
+          labelLine: {
+            lineStyle: { color: normalizeChartColor(theme.border) },
+          },
+          emphasis: {
+            focus: 'none',
+            scale: true,
+            scaleSize: fullscreen ? 10 : 8,
+            label: {
+              show: true,
+              fontWeight: 600,
+              formatter: '{b}\n{c} ({d}%)',
+            },
+          },
+          data: pieData,
         },
       ],
     }
@@ -267,8 +448,19 @@ export function buildEChartsOption(
   if (spec.type === 'funnel') {
     const nameField = spec.encoding.x?.field ?? 'stage'
     const valueField = spec.encoding.value?.field ?? yFields(spec)[0]
+    const sliceBorder = normalizeChartColor(theme.border)
+    const funnelData = spec.data.map((row, index) => ({
+      name: String(row[nameField] ?? '—'),
+      value: toNumeric(row[valueField]) ?? 0,
+      ...pieSliceStates(palette[index % palette.length], sliceBorder),
+    }))
     return {
       ...base,
+      tooltip: {
+        ...base.tooltip,
+        trigger: 'item',
+        formatter: pieTooltipFormatter,
+      },
       series: [
         {
           type: 'funnel',
@@ -279,11 +471,7 @@ export function buildEChartsOption(
           sort: 'descending',
           gap: 4,
           label: { color: theme.text, fontSize: axisFontSize },
-          itemStyle: { borderColor: theme.border, borderWidth: 1 },
-          data: spec.data.map((row) => ({
-            name: String(row[nameField] ?? '—'),
-            value: toNumeric(row[valueField]) ?? 0,
-          })),
+          data: funnelData,
         },
       ],
     }
@@ -388,30 +576,45 @@ export function buildEChartsOption(
 
   const yField = yFieldList[0]
   const series = seriesField && yField
-    ? multiSeriesData(spec, xField, yField, seriesField, fullscreen)
+    ? multiSeriesData(spec, xField, yField, seriesField, palette, fullscreen)
     : spec.type === 'line'
-      ? yFieldList.map((field) => ({
-          name: field,
-          type: 'line',
-          smooth: spec.options?.smooth ?? true,
-          showSymbol: spec.data.length <= 24,
-          symbolSize: fullscreen ? 8 : undefined,
-          lineStyle: fullscreen ? { width: 3 } : undefined,
-          data: seriesValues(spec, xField, field),
-        }))
-      : yFieldList.map((field) => ({
-          name: field,
-          type: 'bar',
-          stack: spec.options?.stack ? 'total' : undefined,
-          barMaxWidth: fullscreen ? 44 : undefined,
-          data: seriesValues(spec, xField, field),
-          itemStyle: {
-            borderRadius: horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0],
-          },
-        }))
+      ? yFieldList.map((field, index) => {
+          const color = palette[index % palette.length]
+          return {
+            name: field,
+            type: 'line',
+            color: normalizeChartColor(color),
+            smooth: spec.options?.smooth ?? true,
+            ...lineSeriesInteractionOptions(fullscreen, color),
+            data: seriesValues(spec, xField, field),
+          }
+        })
+      : yFieldList.map((field, index) => {
+          const color = palette[index % palette.length]
+          const barStyle = barSeriesInteractionOptions(color)
+          return {
+            name: field,
+            type: 'bar',
+            stack: spec.options?.stack ? 'total' : undefined,
+            barMaxWidth: fullscreen ? 44 : undefined,
+            color: normalizeChartColor(color),
+            ...barStyle,
+            data: seriesValues(spec, xField, field),
+            itemStyle: {
+              ...barStyle.itemStyle,
+              borderRadius: horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0],
+            },
+          }
+        })
 
   const option: Record<string, unknown> = {
     ...base,
+    tooltip: {
+      ...base.tooltip,
+      ...(spec.type === 'line' || spec.type === 'bar'
+        ? { valueFormatter: axisTooltipValueFormatter }
+        : {}),
+    },
     legend: {
       top: 8,
       left: 12,
@@ -440,8 +643,8 @@ export function buildEChartsOption(
         height: 18,
         bottom: fullscreen ? 18 : 8,
         borderColor: theme.border,
-        fillerColor: 'oklch(0.74 0.14 185 / 18%)',
-        handleStyle: { color: theme.palette[0] },
+        fillerColor: `${palette[0]}2e`,
+        handleStyle: { color: palette[0] },
         textStyle: { color: theme.muted },
       },
     ]

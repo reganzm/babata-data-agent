@@ -13,7 +13,8 @@ export const ximoAgent = new Agent({
   model: getModelForRole('ximo'),
   workspace: createAgentSkillWorkspace('ximo'),
   instructions: withSkillUsageInstructions(ximoInstructions),
-  tools: getXimoDbTools(),
+  // 每次 run 解析 tools，确保 ragQuery 计数器按单次委派重置
+  tools: () => getXimoDbTools(),
   defaultOptions: {
     outputProcessors: [persistPayloadSlimmer],
   },

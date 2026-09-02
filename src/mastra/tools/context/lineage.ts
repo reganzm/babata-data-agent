@@ -6,6 +6,7 @@ import {
   type AnalysisArtifact,
 } from '@/lib/visualization/types'
 import { defaultToolHooks, runToolWithHooks } from '@/mastra/tools/hooks'
+import { getHundunHttpTimeoutMs } from './http-timeout'
 
 const lineageGraphNodeSchema = z.object({
   id: z.string(),
@@ -245,7 +246,9 @@ export async function queryDataLineageOperation(input: QueryDataLineageInput) {
 
   let response: Response
   try {
-    response = await fetch(buildLineageUrl(endpoint, queryTable))
+    response = await fetch(buildLineageUrl(endpoint, queryTable), {
+      signal: AbortSignal.timeout(getHundunHttpTimeoutMs()),
+    })
   } catch (error) {
     return emptyLineageResult(
       `数据血缘接口请求失败：${messageFromUnknownError(error)}`,

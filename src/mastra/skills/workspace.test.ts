@@ -178,6 +178,8 @@ test('initial repository skills are discoverable only by their owning agent', as
     ximo: ['skills/text-to-sql-analysis'],
     hundun: ['skills/context-recon'],
     chestnut: ['skills/report-polishing'],
+    juju: ['skills/event-tracking-acceptance'],
+    dax: ['skills/local-knowledge-sql'],
   }
 
   const config = getAgentSkillsConfig({

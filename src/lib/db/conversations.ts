@@ -2,6 +2,8 @@ import { z } from 'zod'
 import { slimStoredMessageParts } from '@/lib/message-persist-slim'
 import { ensureSchema } from './schema'
 import { getDbClient } from './client'
+import type { InStatement } from '@libsql/client'
+import { toPersistedMessageId } from './persist-message-id'
 
 const storedMessageSchema = z.object({
   id: z.string(),
@@ -24,6 +26,9 @@ export const conversationMetadataSchema = z.object({
     .optional(),
   /** 用户手动改过标题后，不再被首条消息自动覆盖 */
   titleEdited: z.boolean().optional(),
+  selectedDataSourceId: z.string().optional(),
+  selectedKnowledgeBaseId: z.string().optional(),
+  chatMode: z.enum(['agent', 'plan']).optional(),
 })
 
 export type ConversationMetadata = z.infer<typeof conversationMetadataSchema>
@@ -217,20 +222,29 @@ export async function updateConversation(
     pinnedAt = null
   }
 
+  const persistedMessages = updates.messages
+    ? updates.messages.map((msg) => ({
+        ...msg,
+        id: toPersistedMessageId(id, msg.id),
+      }))
+    : messages
+
   const db = getDbClient()
-  await db.execute({
-    sql: `UPDATE babata_conversations SET title = ?, metadata = ?, updated_at = ?, pinned_at = ? WHERE id = ?`,
-    args: [title, JSON.stringify(metadata), updatedAt, pinnedAt, id],
-  })
+  const statements: InStatement[] = [
+    {
+      sql: `UPDATE babata_conversations SET title = ?, metadata = ?, updated_at = ?, pinned_at = ? WHERE id = ?`,
+      args: [title, JSON.stringify(metadata), updatedAt, pinnedAt, id],
+    },
+  ]
 
   if (updates.messages) {
-    await db.execute({
+    statements.push({
       sql: `DELETE FROM babata_messages WHERE conversation_id = ?`,
       args: [id],
     })
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i]
-      await db.execute({
+    for (let i = 0; i < persistedMessages.length; i++) {
+      const msg = persistedMessages[i]
+      statements.push({
         sql: `INSERT INTO babata_messages (id, conversation_id, role, parts, sort_order, created_at)
               VALUES (?, ?, ?, ?, ?, ?)`,
         args: [
@@ -245,10 +259,12 @@ export async function updateConversation(
     }
   }
 
+  await db.batch(statements, 'write')
+
   return {
     ...existing,
     title,
-    messages,
+    messages: persistedMessages,
     metadata,
     pinnedAt: pinnedAt ?? undefined,
     updatedAt,

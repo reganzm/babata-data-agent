@@ -228,6 +228,7 @@ function scoreSuspendPayloadForSync(payload: unknown, status?: string): number {
   if (!isRecord(payload)) return -1
   let score = status === 'suspended' ? 10 : 0
   if (payload.approvalType === 'few-shot-save') score += 30
+  if (payload.approvalType === 'query-normalization') score += 28
   if (payload.approvalType === 'intent-clarification') score += 26
   if (payload.approvalType === 'sql-approval') score += 12
   if (isRecord(payload.draft)) score += 6

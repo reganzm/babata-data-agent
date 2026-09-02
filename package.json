@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build",
-    "start": "next start",
+    "dev": "next dev --webpack",
+    "build": "next build --webpack && node scripts/prepare-standalone.js",
+    "start": "node scripts/start-standalone.js",
     "lint": "next lint",
     "user:create": "tsx scripts/create-user.ts",
     "user:chpwd": "tsx scripts/change-user-password.ts"

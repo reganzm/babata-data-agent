@@ -108,6 +108,10 @@ export function filterDelegationMessages({
     return recent
   }
 
+  if (primitiveId.includes('juju')) {
+    return recent
+  }
+
   return recent
 }
 
@@ -128,6 +132,17 @@ export function onDelegationStart(
   if (ctx.primitiveId.includes('hundun')) {
     logAuditEvent({
       event: 'babata-hundun.prompt',
+      primitiveId: ctx.primitiveId,
+      primitiveType: ctx.primitiveType,
+      iteration: ctx.iteration,
+      runId: ctx.runId,
+      threadId: ctx.threadId,
+      prompt: ctx.prompt,
+    })
+  }
+  if (ctx.primitiveId.includes('juju')) {
+    logAuditEvent({
+      event: 'babata-juju.prompt',
       primitiveId: ctx.primitiveId,
       primitiveType: ctx.primitiveType,
       iteration: ctx.iteration,
@@ -192,6 +207,17 @@ export function onDelegationStart(
     }
   }
 
+  if (ctx.primitiveId.includes('juju')) {
+    const suffix =
+      '\n\n【总管约束】你是埋点验收专家。必须通过 event-tracking-query 工具查询真实上报数据，禁止编造埋点数量或字段取值；验收范围仅系统当天（ds 固定为今天 Asia/Shanghai YYYYMMDD，由工具自动填入，不查历史/多天，即使 prompt 提到「最近 N 天」也只按当天核验）；返回行数上限 1000 行；验收前必须先从文档识别埋点版本号，识别不到则停下用自然语言向用户澄清追问、不得默认全量；确认版本号后以 major.minor.patch 字符串通过 minAppVersion 传入（工具内部转 app_version_code 比较）；验收前先用 list-app-keys 拿 peanut 的 app_key 再按 appKeys 过滤；产出结构化验收报告（Markdown 表格），并在 caveats 说明验收范围为当天。'
+    const modifiedPrompt =
+      typeof ctx.prompt === 'string' ? ctx.prompt + suffix : ctx.prompt
+    return {
+      modifiedPrompt,
+      modifiedMaxSteps: 12,
+    }
+  }
+
   if (
     ctx.primitiveType === 'workflow' ||
     ctx.primitiveId.includes('workflow') ||
@@ -239,6 +265,19 @@ export function onDelegationComplete(ctx: DelegationCompleteContext): {
       error: ctx.error?.message ?? null,
     })
   }
+  if (ctx.primitiveId.includes('juju')) {
+    logAuditEvent({
+      event: 'babata-juju.result',
+      primitiveId: ctx.primitiveId,
+      primitiveType: ctx.primitiveType,
+      success: ctx.success,
+      durationMs: ctx.duration,
+      iteration: ctx.iteration,
+      runId: ctx.runId,
+      resultText: ctx.result?.text ?? null,
+      error: ctx.error?.message ?? null,
+    })
+  }
   logDelegation('complete', {
     primitiveId: ctx.primitiveId,
     primitiveType: ctx.primitiveType,
@@ -268,6 +307,15 @@ export function onDelegationComplete(ctx: DelegationCompleteContext): {
     if (ctx.primitiveId.includes('hundun')) {
       logAuditEvent({
         event: 'babata-hundun.feedback',
+        primitiveId: ctx.primitiveId,
+        primitiveType: ctx.primitiveType,
+        runId: ctx.runId,
+        feedback,
+      })
+    }
+    if (ctx.primitiveId.includes('juju')) {
+      logAuditEvent({
+        event: 'babata-juju.feedback',
         primitiveId: ctx.primitiveId,
         primitiveType: ctx.primitiveType,
         runId: ctx.runId,

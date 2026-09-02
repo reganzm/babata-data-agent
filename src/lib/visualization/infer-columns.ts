@@ -21,8 +21,15 @@ function isTemporalValue(value: unknown): boolean {
   if (typeof value === 'number') {
     const n = Math.trunc(value)
     if (n >= 19700101 && n <= 21001231 && String(n).length === 8) return true
-    const year = new Date(value).getFullYear()
-    return year >= 1970 && year <= 2100
+    if (n >= 1_000_000_000_000) {
+      const year = new Date(n).getFullYear()
+      return year >= 1970 && year <= 2100
+    }
+    if (n >= 1_000_000_000 && n < 1_000_000_000_000) {
+      const year = new Date(n * 1000).getFullYear()
+      return year >= 1970 && year <= 2100
+    }
+    return false
   }
   if (typeof value !== 'string') return false
   const trimmed = value.trim()

@@ -1,40 +1,30 @@
 ---
 name: context-recon
-description: Use when 混沌需要查询元数据、RAG、血缘或数仓源码，为巴巴塔提供上下文证据包。
+description: Use when 混沌需要根据用户问题查询 RAG 接口，为巴巴塔提供上下文证据包。
 agent: hundun
-version: 0.1.0
+version: 0.2.0
 ---
 
 # 混沌上下文侦察 Skill
 
 ## 使用场景
 
-- 用户问题涉及指标口径、字段含义、表含义、数据血缘或源 SQL。
-- 巴巴塔需要先获得上下文证据，再决定是否委派西莫查数。
-- RAG、血缘或源码工具可能不可用，需要明确说明不可用状态。
+- 用户问题涉及指标口径、字段含义、表含义、业务知识或历史案例等上下文。
+- 巴巴塔需要先获得 RAG 上下文证据，再决定是否委派西莫查数或向用户澄清。
+- RAG 接口可能失败或无结果，需要明确说明不可用/未找到状态。
 
 ## 工作流程
 
-1. 先识别需要哪类证据：元数据、RAG、血缘、源码。
-2. 使用 `list-context-tables` 和 `describe-context-table` 查候选表字段。
-3. 使用 `query-rag-knowledge` 查询知识库；未配置时如实说明。
-4. 使用 `query-data-lineage` 查询血缘；未配置时如实说明。若返回 `vizBlock`，在证据包末尾原样保留 `babata-viz` 图表块。
-5. 按“本地文件检索流程”使用 `glob-warehouse-sources`、`search-warehouse-sources`、`read-warehouse-source` 探查白名单源码。
-6. 输出“上下文证据包”，每条关键判断都附来源。
-
-## 本地文件检索流程
-
-1. 若要搜索本地数仓源码，先用 `glob-warehouse-sources` 按文件名或目录名查找候选文件。
-2. 如果 `glob-warehouse-sources` 找到匹配文件，再用 `search-warehouse-sources` 在候选文件中搜索关键字。
-3. 只有当 `search-warehouse-sources` 搜到关键字后，才调用 `read-warehouse-source` 提取相关片段。
-4. 调用 `read-warehouse-source` 时必须设置合适的 `offset` 和 `limit`，只读取命中位置附近内容，避免一次读入过大的文件。
-5. 如果 `glob-warehouse-sources` 没有找到匹配文件或目录，再启用 `search-warehouse-sources` 做全文搜索。
-6. 全文搜索命中后，再用 `read-warehouse-source` 按命中位置读取片段；全文搜索也无命中时，明确说明未找到本地源码证据。
+1. 从用户问题提炼检索 query（保持原意，必要时补全关键业务对象名称；不要编造未出现的实体）。
+2. 调用 `query-rag-knowledge`，把提炼后的 query 作为入参查询 RAG 接口。
+3. 将返回内容整理为「混沌上下文证据包」：摘录关键证据，每条关键判断都附来源。
+4. 若接口失败、未配置或无命中，如实说明原因，并写「未找到证据」；不得编造内容。
+5. 在证据包末尾给出给巴巴塔的下一步建议：直接委派西莫 / 先向用户澄清 / 暂不查数。
 
 ## 禁止事项
 
 - 不执行 `execute-readonly-sql`。
 - 不调用 `build-visualization`。
+- 不调用已下线的元数据、血缘、源码工具。
 - 不输出未经执行的业务数字结论。
-- 不编造 RAG、血缘、源码或字段证据。
-
+- 不编造 RAG 证据。

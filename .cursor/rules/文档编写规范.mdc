@@ -1,0 +1,9 @@
+---
+description: 文档编写规范
+alwaysApply: true
+---
+
+
+# 文档编写规范
+- 技术文档优先使用中文编写
+- 所有文档放到项目根目录下的docs文件夹，并且保存为markdown文件，并且链接到主索引文件README.md中

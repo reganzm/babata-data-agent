@@ -17,7 +17,6 @@ test('babata instructions forbid null suspendedToolRunId for ximo delegation', (
 test('babata instructions keep ximo clarification out of data analysis workflow', () => {
   const instructions = buildBabataInstructions()
 
-  assert.match(instructions, /查数类需求默认委派西莫/)
   assert.match(instructions, /文本追问用户/)
   assert.match(instructions, /不要.*data-analysis-report/)
   assert.match(instructions, /不要.*workflow.*澄清弹窗/)
@@ -35,30 +34,51 @@ test('data analysis report workflow does not use bare Text2SQL as trigger phrase
   )
 })
 
-test('babata instructions include hundun context support routing', () => {
+test('babata instructions force hundun then ximo for data queries', () => {
   const instructions = buildBabataInstructions()
 
   assert.match(instructions, /混沌/)
   assert.match(instructions, /hundun/)
-  assert.match(instructions, /指标口径|字段含义|表含义/)
-  assert.match(instructions, /数据血缘/)
-  assert.match(instructions, /RAG/)
-  assert.match(instructions, /源 SQL|源码/)
-  assert.match(instructions, /先委派混沌[\s\S]*再[\s\S]*西莫|混沌[\s\S]*西莫/)
+  assert.match(instructions, /问数|查数/)
+  assert.match(instructions, /query-rag-knowledge|RAG/)
+  assert.match(instructions, /confirm-normalized-query/)
+  assert.match(instructions, /禁止跳过混沌直接西莫/)
+  assert.match(instructions, /完整附上混沌证据包/)
+  assert.match(
+    instructions,
+    /confirm-normalized-query[\s\S]*混沌[\s\S]*西莫|先调用工具[\s\S]*confirm-normalized-query/,
+  )
+  assert.doesNotMatch(instructions, /查数类需求默认委派西莫/)
 })
 
-test('babata instructions route pure lineage searches directly to Hundun lineage tool', () => {
+test('babata instructions do not keep pure lineage-only routing', () => {
   const instructions = buildBabataInstructions()
 
-  assert.match(instructions, /查.*血缘|搜.*血缘|看.*血缘/)
-  assert.match(instructions, /query-data-lineage/)
-  assert.match(instructions, /不要委派西莫/)
-  assert.match(instructions, /不要做.*SQL.*分析|不做.*数据分析/)
-  assert.match(instructions, /不.*总结|不.*摘要/)
-  assert.match(instructions, /只.*图.*表/)
+  assert.doesNotMatch(instructions, /query-data-lineage/)
+  assert.doesNotMatch(instructions, /血缘专用|直接委派混沌[\s\S]*query-data-lineage/)
+})
+
+test('babata instructions keep workflows without mandatory hundun', () => {
+  const instructions = buildBabataInstructions()
+
+  assert.match(instructions, /data-analysis-report/)
+  assert.match(instructions, /weekly-metrics/)
+  assert.match(instructions, /不强制先走混沌/)
 })
 
 test('delegation label resolves hundun', () => {
   assert.equal(getDelegationLabel('agent-hundun'), '混沌')
   assert.equal(getDelegationLabel('hundun'), '混沌')
+})
+
+test('有本地选择时路由表强制委派达克斯', () => {
+  const instructions = buildBabataInstructions()
+  assert.match(instructions, /selectedDataSourceId/)
+  assert.match(instructions, /只委派达克斯/)
+  assert.match(instructions, /达克斯/)
+})
+
+test('delegation label resolves dax', () => {
+  assert.equal(getDelegationLabel('agent-dax'), '达克斯')
+  assert.equal(getDelegationLabel('dax'), '达克斯')
 })

@@ -55,7 +55,7 @@ export function logSqlAudit(params: {
 
 export function logToolAudit(params: {
   tool: string
-  agent?: 'ximo' | 'hundun'
+  agent?: 'ximo' | 'hundun' | 'dax'
   phase: 'input' | 'result' | 'error'
   input?: unknown
   result?: unknown

@@ -7,7 +7,9 @@
 import { Mastra } from '@mastra/core'
 import { babataAgent } from './agents/babata'
 import { chestnutAgent } from './agents/chestnut'
+import { daxAgent } from './agents/dax'
 import { hundunAgent } from './agents/hundun'
+import { jujuAgent } from './agents/juju'
 import { ximoAgent } from './agents/ximo'
 import { mastraStorage } from './storage'
 import { dataAnalysisPrepWorkflow } from './workflows/data-analysis-prep'
@@ -21,6 +23,8 @@ export const mastra = new Mastra({
     ximo: ximoAgent,
     chestnut: chestnutAgent,
     hundun: hundunAgent,
+    juju: jujuAgent,
+    dax: daxAgent,
   },
   workflows: {
     dataAnalysisPrep: dataAnalysisPrepWorkflow,

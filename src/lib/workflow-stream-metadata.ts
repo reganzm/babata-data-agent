@@ -61,6 +61,7 @@ function suspendPayloadScore(
   if (step.status === 'suspended') score += 20
   const obj = payload as Record<string, unknown>
   if (obj.approvalType === 'few-shot-save') score += 10
+  if (obj.approvalType === 'query-normalization') score += 8
   if (obj.approvalType === 'intent-clarification') score += 2
   if (obj.approvalType === 'sql-approval') score += 2
   if (obj.draft && typeof obj.draft === 'object') score += 4
@@ -174,10 +175,25 @@ function approvalStageRank(payload: unknown): number {
     return 3
   }
   const approvalType = data.approvalType
+  if (approvalType === 'query-normalization') return 0
   if (approvalType === 'intent-clarification') return 1
   if (approvalType === 'sql-approval') return 2
   if (approvalType === 'few-shot-save') return 4
   return 0
+}
+
+function resolveToolSuspendWorkflowId(toolName: string): string {
+  const name = toolName.toLowerCase()
+  if (
+    name.includes('confirmnormalizedquery') ||
+    name.includes('confirm-normalized-query')
+  ) {
+    return 'query-normalization'
+  }
+  if (name.includes('weeklymetrics') || name.includes('weekly-metrics')) {
+    return 'weekly-metrics'
+  }
+  return 'data-analysis-report'
 }
 
 export function shouldReplacePendingApproval(params: {
@@ -227,9 +243,7 @@ export function extractWorkflowSuspendFromChunk(chunk: unknown): {
       const agentRunId = item.data.runId
       if (!agentRunId) continue
       const toolName = item.data.toolName ?? ''
-      const workflowId = toolName.includes('weeklyMetrics')
-        ? 'weekly-metrics'
-        : 'data-analysis-report'
+      const workflowId = resolveToolSuspendWorkflowId(toolName)
       return {
         runId: agentRunId,
         agentRunId,
@@ -310,7 +324,13 @@ export async function applyWorkflowSuspendMetadata(
     workflowRunId?: string
   },
 ): Promise<void> {
-  const workflowRunId = info.workflowRunId ?? info.runId
+  // Agent 工具 suspend 只有 agentRunId，不能把 runId 误当成 workflowRunId，
+  // 否则前端会走 /api/workflow/resume 并报 Workflow not found。
+  const isAgentToolSuspend =
+    Boolean(info.agentRunId) && info.workflowRunId === undefined
+  const workflowRunId = isAgentToolSuspend
+    ? undefined
+    : (info.workflowRunId ?? info.runId)
   const existing = await getConversationById(conversationId, userId)
   const incoming = {
     workflowId: info.workflowId,
@@ -328,7 +348,7 @@ export async function applyWorkflowSuspendMetadata(
   }
   const metadata: ConversationMetadata = {
     ...existing?.metadata,
-    activeWorkflowRunId: workflowRunId,
+    activeWorkflowRunId: workflowRunId ?? info.agentRunId ?? info.runId,
     pendingApproval: incoming,
   }
   await updateConversation(conversationId, userId, { metadata })

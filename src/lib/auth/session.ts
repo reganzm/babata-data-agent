@@ -92,10 +92,25 @@ export async function parseSessionToken(
   }
 }
 
-export function sessionCookieOptions(maxAgeSec: number) {
+function parseBooleanEnv(value: string | undefined): boolean | null {
+  const normalized = value?.trim().toLowerCase()
+  if (normalized === 'true' || normalized === '1') return true
+  if (normalized === 'false' || normalized === '0') return false
+  return null
+}
+
+/**
+ * 内网 HTTP 部署时不能设 Secure，否则浏览器丢弃 Cookie，登录成功也无法进主页。
+ * 仅当显式 BABATA_COOKIE_SECURE=true 时才启用。
+ */
+export function shouldUseSecureCookie(_request?: Request): boolean {
+  return parseBooleanEnv(process.env.BABATA_COOKIE_SECURE) === true
+}
+
+export function sessionCookieOptions(maxAgeSec: number, request?: Request) {
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: shouldUseSecureCookie(request),
     sameSite: 'lax' as const,
     path: '/',
     maxAge: maxAgeSec,

@@ -1,4 +1,4 @@
-export type ToolAgent = 'ximo' | 'hundun'
+export type ToolAgent = 'ximo' | 'hundun' | 'dax'
 
 export type ToolHookContext<Input = unknown, Result = unknown> = {
   agent: ToolAgent
