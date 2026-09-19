@@ -103,6 +103,51 @@ function resolveStandaloneEntry() {
   return resolvedEntry
 }
 
+/**
+ * libsql 内部用动态拼接的字符串 require(`@libsql/${target}`) 加载平台原生绑定（.node 二进制），
+ * Next.js 的 output file tracing（@vercel/nft）是静态分析，识别不了这种运行时拼出来的 require，
+ * 导致 @libsql/<platform> 原生包不会被复制进 .next/standalone，运行时报 Cannot find module。
+ * 这里把项目里已安装好的对应平台原生包手动复制进 standalone 产物。
+ * @see https://github.com/tursodatabase/libsql-js
+ */
+function copyNativeLibsqlBindings(entry) {
+  const pnpmDir = path.join(root, 'node_modules', '.pnpm')
+  if (!fs.existsSync(pnpmDir)) return []
+
+  const copied = []
+  for (const dirName of fs.readdirSync(pnpmDir)) {
+    if (!dirName.startsWith('libsql@')) continue
+    const atLibsqlDir = path.join(pnpmDir, dirName, 'node_modules', '@libsql')
+    if (!fs.existsSync(atLibsqlDir)) continue
+
+    for (const platformPkg of fs.readdirSync(atLibsqlDir)) {
+      const sourceLink = path.join(atLibsqlDir, platformPkg)
+      let realSource
+      try {
+        realSource = fs.realpathSync(sourceLink)
+      } catch {
+        continue
+      }
+
+      const targetDir = path.join(
+        entry.appDir,
+        'node_modules',
+        '.pnpm',
+        dirName,
+        'node_modules',
+        '@libsql',
+        platformPkg,
+      )
+      if (fs.existsSync(targetDir)) continue
+
+      fs.mkdirSync(path.dirname(targetDir), { recursive: true })
+      fs.cpSync(realSource, targetDir, { recursive: true })
+      copied.push(`@libsql/${platformPkg}`)
+    }
+  }
+  return copied
+}
+
 function prepareStandaloneAssets() {
   const entry = resolveStandaloneEntry()
   if (!entry) {
@@ -126,12 +171,19 @@ function prepareStandaloneAssets() {
     }
   }
 
+  const nativeBindings = copyNativeLibsqlBindings(entry)
+
   if (!staticCopied) {
     console.error('[prepare-standalone] 缺少 .next/static，请先执行 pnpm build')
     process.exit(1)
   }
 
-  const parts = ['static', publicCopied && 'public', envCopied && 'env'].filter(Boolean)
+  const parts = [
+    'static',
+    publicCopied && 'public',
+    envCopied && 'env',
+    nativeBindings.length > 0 && `libsql native(${nativeBindings.join(', ')})`,
+  ].filter(Boolean)
   console.log(
     `[prepare-standalone] 已同步 standalone 资源（${parts.join(' + ')}）→ ${path.relative(root, entry.appDir)}`,
   )

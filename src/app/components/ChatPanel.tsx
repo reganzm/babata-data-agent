@@ -12,7 +12,8 @@ import {
 import { useChat, type UIMessage } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import { motion, AnimatePresence } from 'motion/react'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, X } from 'lucide-react'
+import { parseChatError } from '@/lib/chat-error'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { slideUp } from '@/lib/animations'
@@ -332,15 +333,21 @@ function ChatPanelChat({
     }
   }, [])
 
-  const { messages, sendMessage, status, stop, setMessages } = useChat({
-    transport,
-    id: conversationId,
-    messages: initialMessages,
-    onFinish: () => {
-      flushPersist(true)
-      onStreamSettledRef.current?.()
-    },
-  })
+  const { messages, sendMessage, status, stop, setMessages, error, clearError } =
+    useChat({
+      transport,
+      id: conversationId,
+      messages: initialMessages,
+      onFinish: () => {
+        flushPersist(true)
+        onStreamSettledRef.current?.()
+      },
+      onError: (err) => {
+        console.error('[ChatPanel] chat request failed', err)
+      },
+    })
+
+  const chatError = useMemo(() => parseChatError(error), [error])
 
   messagesSnapshotRef.current = messages
   const stopRef = useRef(stop)
@@ -940,6 +947,27 @@ function ChatPanelChat({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {chatError && (
+        <div className="mx-4 mb-2 flex items-start justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive md:mx-6">
+          <div>
+            <p className="font-medium">
+              请求失败
+              {chatError.statusCode ? `（状态码 ${chatError.statusCode}）` : ''}
+              {chatError.code ? ` · ${chatError.code}` : ''}
+            </p>
+            <p className="mt-1 text-destructive/90">{chatError.message}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => clearError()}
+            aria-label="关闭错误提示"
+            className="shrink-0 rounded p-1 text-destructive/70 hover:bg-destructive/20 hover:text-destructive"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       <ChatComposer
         value={localSelection}

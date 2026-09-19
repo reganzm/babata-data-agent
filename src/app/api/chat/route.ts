@@ -3,7 +3,11 @@
  */
 
 import { handleChatStream } from '@mastra/ai-sdk'
-import { type UIMessageChunk, createUIMessageStreamResponse } from 'ai'
+import {
+  APICallError,
+  type UIMessageChunk,
+  createUIMessageStreamResponse,
+} from 'ai'
 import { resourceIdForUser } from '@/lib/auth/constants'
 import { isSessionPayload, requireApiSession } from '@/lib/auth/server'
 import { isClientAbortError } from '@/lib/client-abort-error'
@@ -80,6 +84,47 @@ function toAbortSafeStream(
       await stream.cancel(reason).catch(() => {})
     },
   })
+}
+
+type UpstreamErrorDetails = {
+  statusCode: number
+  code: string
+  message: string
+}
+
+/**
+ * 底层模型调用（如 OpenAI）失败时，AI SDK 抛出的是 APICallError，携带真实的
+ * statusCode / responseBody，默认会被吞成一条日志，前端完全看不到。这里统一
+ * 提取出可展示给用户的状态码和 message。
+ */
+function describeUpstreamError(error: unknown): UpstreamErrorDetails {
+  if (APICallError.isInstance(error)) {
+    let providerCode: string | undefined
+    if (error.responseBody) {
+      try {
+        const parsed = JSON.parse(error.responseBody) as {
+          error?: { code?: string }
+        }
+        providerCode = parsed.error?.code
+      } catch {
+        // 上游返回的不是 JSON，忽略
+      }
+    }
+    return {
+      statusCode: error.statusCode ?? 502,
+      code: providerCode ?? 'upstream_api_error',
+      message: error.message,
+    }
+  }
+  return {
+    statusCode: 500,
+    code: 'internal_error',
+    message: error instanceof Error ? error.message : '处理对话请求时发生错误',
+  }
+}
+
+function serializeErrorForClient(error: unknown): string {
+  return JSON.stringify(describeUpstreamError(error))
 }
 
 function sanitizeMessages(messages: unknown): unknown[] {
@@ -278,6 +323,10 @@ export async function POST(req: Request) {
         mastra,
         agentId,
         version: 'v6',
+        onError: (error) => {
+          console.error('[POST /api/chat] stream error', error)
+          return serializeErrorForClient(error)
+        },
         params: {
           messages: normalizedMessages,
           trigger,
@@ -322,10 +371,9 @@ export async function POST(req: Request) {
     })
   } catch (error) {
     console.error('[POST /api/chat]', error)
-    const message =
-      error instanceof Error ? error.message : '处理对话请求时发生错误'
-    return new Response(JSON.stringify({ error: message }), {
-      status: 500,
+    const { statusCode } = describeUpstreamError(error)
+    return new Response(serializeErrorForClient(error), {
+      status: statusCode,
       headers: { 'Content-Type': 'application/json' },
     })
   }
