@@ -177,8 +177,8 @@ export default function KnowledgeBasesPage() {
         `/api/knowledge-bases/${knowledgeBaseId}/documents/${documentId}`,
       )
       if (!res.ok) {
-        const body = (await res.json()) as { error?: string }
-        throw new Error(body.error || '下载失败')
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(body.error || `下载失败（${res.status}）`)
       }
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)

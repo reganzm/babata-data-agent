@@ -4,6 +4,7 @@ import {
   assistantDisplaySignature,
   findLastAssistantMessageId,
   getAssistantMotionInitial,
+  isAssistantMessageBlank,
   isLiveAssistantMessage,
   messagesDisplaySignature,
 } from './chat-message-live'
@@ -51,4 +52,25 @@ test('展示签名忽略心跳 part，避免无内容变化也触发重绘', () 
       { id: 'a1', role: 'assistant', parts: withHeartbeat },
     ]),
   )
+})
+
+test('只有 step-start/心跳/空文本的助手消息视为空白，不渲染空气泡', () => {
+  assert.equal(isAssistantMessageBlank([]), true)
+  assert.equal(
+    isAssistantMessageBlank([
+      { type: 'step-start' },
+      { type: 'data-heartbeat' },
+      { type: 'text', text: '  \n' },
+    ]),
+    true,
+  )
+})
+
+test('含文本、工具调用或未知类型 part 的助手消息不算空白', () => {
+  assert.equal(isAssistantMessageBlank([{ type: 'text', text: '你好' }]), false)
+  assert.equal(
+    isAssistantMessageBlank([{ type: 'step-start' }, { type: 'tool-listSourceTables' }]),
+    false,
+  )
+  assert.equal(isAssistantMessageBlank([{ type: 'data-workflow-progress' }]), false)
 })

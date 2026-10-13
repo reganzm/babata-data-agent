@@ -181,7 +181,12 @@ export default function DataSourcesPage() {
               user: editor.user,
               database: editor.database,
               enabled: editor.enabled,
-              ...(editor.password ? { password: editor.password } : {}),
+              // 编辑时留空表示不改密码；新建时需要把空密码也传给后端（测试库允许空密码）
+              ...(editor.id
+                ? editor.password
+                  ? { password: editor.password }
+                  : {}
+                : { password: editor.password }),
             }
       const res = await fetch(
         editor.id ? `/api/data-sources/${editor.id}` : '/api/data-sources',

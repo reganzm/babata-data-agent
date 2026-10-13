@@ -65,6 +65,26 @@ export function assistantDisplaySignature(parts: DisplayPart[]): string {
     .join('|')
 }
 
+const IGNORABLE_BLANK_PART_TYPES = new Set([
+  'step-start',
+  'data-heartbeat',
+  'reasoning',
+])
+
+/**
+ * 助手消息没有任何可展示内容（只有 step-start/心跳/空文本），
+ * 常见于流式请求中途出错：此时不应渲染空白气泡。
+ * 遇到未知类型的 part 一律视为「有内容」，避免误隐藏。
+ */
+export function isAssistantMessageBlank(parts: DisplayPart[]): boolean {
+  return parts.every((part) => {
+    const type = part.type ?? ''
+    if (IGNORABLE_BLANK_PART_TYPES.has(type)) return true
+    if (type === 'text') return !part.text?.trim()
+    return false
+  })
+}
+
 export function messagesDisplaySignature(
   messages: Array<{ id: string; role: string; parts?: DisplayPart[] }>,
 ): string {

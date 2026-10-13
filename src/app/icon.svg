@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Babata</title>
+  <rect width="64" height="64" rx="14" fill="#0f766e"/>
+  <path fill="#ffffff" d="M20 11h24a9 9 0 0 1 9 9v18a9 9 0 0 1-9 9H33.5L22 56.5V47h-2a9 9 0 0 1-9-9V20a9 9 0 0 1 9-9z"/>
+  <rect x="19" y="30" width="7" height="10" rx="1.5" fill="#0f766e"/>
+  <rect x="28.5" y="22" width="7" height="18" rx="1.5" fill="#0f766e"/>
+  <rect x="38" y="15.5" width="7" height="24.5" rx="1.5" fill="#0f766e"/>
+</svg>

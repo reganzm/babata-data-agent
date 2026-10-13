@@ -16,7 +16,16 @@ export async function GET(_request: Request, context: RouteContext) {
   const session = await requireApiSession()
   if (!isSessionPayload(session)) return session
   const { id, documentId } = await context.params
-  const document = await readKnowledgeDocumentContent(id, documentId, session.userId)
+  let document
+  try {
+    document = await readKnowledgeDocumentContent(id, documentId, session.userId)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code
+    if (code === 'ENOENT') {
+      return NextResponse.json({ error: '文档文件已丢失，请重新上传' }, { status: 404 })
+    }
+    return NextResponse.json({ error: '读取文档失败' }, { status: 500 })
+  }
   if (!document) {
     return NextResponse.json({ error: '文档不存在' }, { status: 404 })
   }

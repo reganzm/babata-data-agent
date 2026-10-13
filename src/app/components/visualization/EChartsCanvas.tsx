@@ -36,23 +36,41 @@ export function EChartsCanvas({
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<ECharts | null>(null)
   const theme = useChartTheme()
+
+  // 回调与最新参数放进 ref：实例只在挂载时初始化一次，数据/主题变化只更新 option，
+  // 避免流式输出时每个 chunk 都销毁并重建 ECharts 实例
   const buildOptionRef = useRef(buildOption)
   buildOptionRef.current = buildOption
+  const themeRef = useRef(theme)
+  themeRef.current = theme
+  const heightRef = useRef(height)
+  heightRef.current = height
+  const onChartReadyRef = useRef(onChartReady)
+  onChartReadyRef.current = onChartReady
+  const onChartClickRef = useRef(onChartClick)
+  onChartClickRef.current = onChartClick
+
+  const frameRef = useRef<number | null>(null)
+  const applyOptionRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     let disposed = false
     let chart: ECharts | null = null
     let observer: ResizeObserver | null = null
 
-    const applyOption = () => {
+    applyOptionRef.current = () => {
       if (!chart || !containerRef.current) return
+      const currentHeight = heightRef.current
       const width = containerRef.current.clientWidth || 320
       const parsedHeight =
-        typeof height === 'number'
-          ? height
+        typeof currentHeight === 'number'
+          ? currentHeight
           : containerRef.current.clientHeight || 240
       chart.setOption(
-        buildOptionRef.current({ width, height: parsedHeight }, theme) as EChartsOption,
+        buildOptionRef.current(
+          { width, height: parsedHeight },
+          themeRef.current,
+        ) as EChartsOption,
         true,
       )
     }
@@ -66,15 +84,17 @@ export function EChartsCanvas({
         renderer: 'canvas',
       })
       chartRef.current = chart
-      onChartReady?.(chart)
-      if (onChartClick) {
-        chart.on('click', onChartClick)
-      }
-      applyOption()
+      onChartReadyRef.current?.(chart)
+      chart.on('click', (params: unknown) => onChartClickRef.current?.(params))
+      applyOptionRef.current()
 
       observer = new ResizeObserver(() => {
-        chart?.resize()
-        applyOption()
+        if (frameRef.current != null) return
+        frameRef.current = requestAnimationFrame(() => {
+          frameRef.current = null
+          chart?.resize()
+          applyOptionRef.current()
+        })
       })
       observer.observe(containerRef.current)
     })()
@@ -82,15 +102,27 @@ export function EChartsCanvas({
     return () => {
       disposed = true
       observer?.disconnect()
-      if (chart && onChartClick) {
-        chart.off('click', onChartClick)
+      if (frameRef.current != null) {
+        cancelAnimationFrame(frameRef.current)
+        frameRef.current = null
       }
+      applyOptionRef.current = () => {}
       chart?.dispose()
       chartRef.current = null
-      onChartReady?.(null)
+      onChartReadyRef.current?.(null)
     }
+  }, [])
+
+  useEffect(() => {
+    if (!chartRef.current) return
+    // 同一帧内的多次数据更新合并为一次 setOption
+    if (frameRef.current != null) return
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null
+      applyOptionRef.current()
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- caller controls deps
-  }, [theme, height, onChartReady, onChartClick, ...deps])
+  }, [theme, height, ...deps])
 
   return (
     <div

@@ -127,14 +127,9 @@ export async function POST(request: Request) {
         { status: 400 },
       )
     }
-    if (
-      !body.host?.trim() ||
-      !body.user?.trim() ||
-      !body.database?.trim() ||
-      !body.password
-    ) {
+    if (!body.host?.trim() || !body.user?.trim() || !body.database?.trim()) {
       return NextResponse.json(
-        { error: '主机、用户、密码和数据库不能为空' },
+        { error: '主机、用户和数据库不能为空' },
         { status: 400 },
       )
     }
@@ -146,7 +141,7 @@ export async function POST(request: Request) {
       host: body.host,
       port: body.port ?? DEFAULT_SQL_ENGINE_PORTS[type],
       user: body.user,
-      password: body.password,
+      password: body.password ?? '',
       database: body.database,
     })
     return NextResponse.json({ dataSource }, { status: 201 })

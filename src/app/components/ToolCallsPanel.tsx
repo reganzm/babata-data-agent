@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatToolErrorMessage } from '@/lib/tool-error-message'
@@ -43,10 +43,16 @@ export function ToolCallsPanel(props: {
 
   const [expanded, setExpanded] = useState(false)
 
+  const wasLiveRef = useRef(false)
+
   useEffect(() => {
     if (props.isLive && hasInProgress) {
       setExpanded(true)
+    } else if (wasLiveRef.current && !props.isLive) {
+      // 本轮回复结束后自动折叠，避免已完成的工具调用占用过多页面空间
+      setExpanded(false)
     }
+    wasLiveRef.current = Boolean(props.isLive)
   }, [props.isLive, hasInProgress])
 
   if (visibleParts.length === 0) return null

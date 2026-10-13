@@ -173,7 +173,7 @@ export function DataSourceEditorDialog(props: {
                 onChange={(event) =>
                   onChange({ ...editor, password: event.target.value })
                 }
-                placeholder={editor.id ? '留空则不改密码' : '密码'}
+                placeholder={editor.id ? '留空则不改密码' : '密码（空密码可留空）'}
               />
               <Input
                 value={editor.database}

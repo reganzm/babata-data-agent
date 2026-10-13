@@ -9,6 +9,12 @@ test('encryptSecret 与 decryptSecret 往返一致', () => {
   assert.equal(decryptSecret(cipher, secret), 'p@ss/词')
 })
 
+test('空密码加密后密文本体为空，仍能正确往返解密', () => {
+  const secret = 'unit-test-data-source-secret-key'
+  const cipher = encryptSecret('', secret)
+  assert.equal(decryptSecret(cipher, secret), '')
+})
+
 test('缺少密钥时加密抛错', () => {
   assert.throws(() => encryptSecret('x', ''), /BABATA_DATA_SOURCE_SECRET/)
 })

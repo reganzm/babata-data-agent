@@ -13,34 +13,90 @@ function normalizeSqlForTableScan(sql: string): string {
     .trim()
 }
 
-function addTableName(target: Set<string>, raw: string): void {
-  const match = raw.trim().match(/^([a-zA-Z_][a-zA-Z0-9_]*)/)
+// 表引用可带库/catalog 前缀（db.table、catalog.db.table），整体捕获后再取最后一段作为表名
+const TABLE_REFERENCE = /^((?:[a-zA-Z_][a-zA-Z0-9_]*\.){0,2}[a-zA-Z_][a-zA-Z0-9_]*)/
+const JOIN_PATTERN =
+  /\b(?:LEFT|RIGHT|INNER|FULL|CROSS)?\s*JOIN\s+((?:[a-zA-Z_][a-zA-Z0-9_]*\.){0,2}[a-zA-Z_][a-zA-Z0-9_]*)/gi
+
+function tableNameOf(reference: string): string {
+  return reference.slice(reference.lastIndexOf('.') + 1)
+}
+
+function addTableReference(target: Set<string>, raw: string): void {
+  const match = raw.trim().match(TABLE_REFERENCE)
   if (match?.[1]) target.add(match[1])
 }
 
-function extractTablesFromFromClause(clause: string, target: Set<string>): void {
-  for (const part of clause.split(',')) {
-    addTableName(target, part)
+const CLAUSE_BOUNDARY = /^(WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT|UNION|(?:LEFT|RIGHT|INNER|FULL|CROSS)?\s*JOIN)\b/i
+
+function computeDepthAt(sql: string, pos: number): number {
+  let depth = 0
+  for (let i = 0; i < pos; i++) {
+    if (sql[i] === '(') depth++
+    else if (sql[i] === ')') depth--
   }
+  return depth
 }
 
-export function extractReferencedTableNames(sql: string): string[] {
+// 从 FROM/JOIN 关键字之后开始扫描，按括号深度切分出同级的表引用列表
+// （子查询内部的逗号、WHERE/GROUP BY 等关键字深度更深，不会被当成外层的子句边界）
+function extractClauseItems(sql: string, start: number, baseDepth: number): string[] {
+  const items: string[] = []
+  let depth = baseDepth
+  let itemStart = start
+  let i = start
+  while (i < sql.length) {
+    const ch = sql[i]
+    if (ch === '(') {
+      depth++
+      i++
+      continue
+    }
+    if (ch === ')') {
+      if (depth === baseDepth) break
+      depth--
+      i++
+      continue
+    }
+    if (depth === baseDepth) {
+      if (CLAUSE_BOUNDARY.test(sql.slice(i))) break
+      if (ch === ',') {
+        items.push(sql.slice(itemStart, i))
+        itemStart = i + 1
+        i++
+        continue
+      }
+    }
+    i++
+  }
+  items.push(sql.slice(itemStart, i))
+  return items.map((item) => item.trim()).filter(Boolean)
+}
+
+// 返回 FROM/JOIN 中出现的完整表引用（可能带库前缀）
+function collectTableReferences(sql: string): string[] {
   const normalized = normalizeSqlForTableScan(sql)
   const tables = new Set<string>()
 
-  const fromMatch = normalized.match(
-    /\bFROM\s+(.+?)(?=\bWHERE\b|\bGROUP\s+BY\b|\bORDER\s+BY\b|\bHAVING\b|\bLIMIT\b|\bUNION\b|$)/i,
-  )
-  if (fromMatch?.[1]) {
-    extractTablesFromFromClause(fromMatch[1], tables)
+  const fromPattern = /\bFROM\b/gi
+  for (const match of normalized.matchAll(fromPattern)) {
+    const start = match.index! + match[0].length
+    const baseDepth = computeDepthAt(normalized, match.index!)
+    for (const item of extractClauseItems(normalized, start, baseDepth)) {
+      if (item.startsWith('(')) continue // 派生表/子查询，内部表名由其自身的 FROM/JOIN 处理
+      addTableReference(tables, item)
+    }
   }
 
-  const joinPattern = /\b(?:LEFT|RIGHT|INNER|FULL|CROSS)?\s*JOIN\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi
-  for (const match of normalized.matchAll(joinPattern)) {
+  for (const match of normalized.matchAll(JOIN_PATTERN)) {
     if (match[1]) tables.add(match[1])
   }
 
   return [...tables]
+}
+
+export function extractReferencedTableNames(sql: string): string[] {
+  return [...new Set(collectTableReferences(sql).map(tableNameOf))]
 }
 
 function escapeRegExp(value: string): string {
@@ -55,6 +111,23 @@ export function rewriteVirtualSql(
     (left, right) => right.exposedName.length - left.exposedName.length,
   )
   let rewritten = sql
+
+  // 带库前缀的引用（如 default_catalog.chatbot.t）整体视为暴露表名，
+  // 避免前缀残留，也避免借前缀访问白名单之外的库
+  let references: string[] = []
+  try {
+    references = collectTableReferences(sql)
+  } catch {
+    // 非只读/无法解析的 SQL 交由上游校验报错
+  }
+  for (const reference of references) {
+    if (!reference.includes('.')) continue
+    const binding = bindings.find((item) => item.exposedName === tableNameOf(reference))
+    if (!binding) continue
+    const pattern = new RegExp(`(?<![\\w.])${escapeRegExp(reference)}(?![\\w])`, 'g')
+    rewritten = rewritten.replace(pattern, binding.exposedName)
+  }
+
   for (const binding of sorted) {
     const pattern = new RegExp(`\\b${escapeRegExp(binding.exposedName)}\\b`, 'g')
     rewritten = rewritten.replace(pattern, binding.tableName)

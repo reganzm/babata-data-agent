@@ -22,7 +22,6 @@ import {
   buildMessagesUpdatePayload,
   sortConversations,
   type StoredConversation,
-  type StoredMessage,
 } from '@/lib/conversation-store'
 import {
   buildConversationPdfExportPayload,
@@ -39,9 +38,10 @@ export default function Home() {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [messagesVersion, setMessagesVersion] = useState(0)
+  // 流式期间只保存引用；仅导出 PDF 时才做 toStoredMessage，避免每个 chunk 深拷贝全部消息
   const liveConversationMessagesRef = useRef<{
     conversationId: string
-    messages: StoredMessage[]
+    messages: Parameters<typeof toStoredMessage>[0][]
   } | null>(null)
   const liveMessagesUpdaterRef = useRef<
     ((conversationId: string, messages: UIMessage[]) => void) | null
@@ -173,7 +173,7 @@ export default function Home() {
       }
       const messages =
         liveConversationMessagesRef.current?.conversationId === id
-          ? liveConversationMessagesRef.current.messages
+          ? liveConversationMessagesRef.current.messages.map(toStoredMessage)
           : conversation.messages
 
       const exportConversation = {
@@ -202,7 +202,7 @@ export default function Home() {
     (conversationId: string, msgs: Parameters<typeof toStoredMessage>[0][]) => {
       liveConversationMessagesRef.current = {
         conversationId,
-        messages: msgs.map(toStoredMessage),
+        messages: msgs,
       }
     },
     [],

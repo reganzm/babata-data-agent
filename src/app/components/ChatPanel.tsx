@@ -50,6 +50,7 @@ import { isHeartbeatUserMessage } from '@/lib/chat-heartbeat'
 import {
   findLastAssistantMessageId,
   getAssistantMotionInitial,
+  isAssistantMessageBlank,
   isLiveAssistantMessage,
   messagesDisplaySignature,
 } from '@/lib/chat-message-live'
@@ -60,6 +61,9 @@ import {
   type ChatComposerState,
 } from '@/lib/chat-composer-state'
 import { ChatComposer } from './ChatComposer'
+
+// 流式 chunk 很密，节流后再触发整个消息列表重渲染
+const STREAM_RENDER_THROTTLE_MS = 80
 
 const SCROLL_THRESHOLD = 80
 
@@ -338,6 +342,7 @@ function ChatPanelChat({
       transport,
       id: conversationId,
       messages: initialMessages,
+      experimental_throttle: STREAM_RENDER_THROTTLE_MS,
       onFinish: () => {
         flushPersist(true)
         onStreamSettledRef.current?.()
@@ -662,6 +667,13 @@ function ChatPanelChat({
     setShowScrollToBottom(false)
   }, [scrollToBottom])
 
+  // 出错提示在对话流末尾，出现时强制滚到底部，确保用户一定能看到
+  useEffect(() => {
+    if (!chatError) return
+    isAtBottomRef.current = true
+    scrollToBottom('smooth')
+  }, [chatError, scrollToBottom])
+
   useEffect(() => {
     if (messages.length === 0) return
     // 消息变更一律防抖落库。agent resume 走 setMessages 时 status 仍是 ready，
@@ -815,6 +827,16 @@ function ChatPanelChat({
                 lastAssistantId,
               )
 
+              // 流式请求中途出错时助手消息可能没有任何内容，不渲染空白气泡；
+              // 错误信息由下方的 ChatErrorNotice 展示
+              if (
+                !isLiveAssistant &&
+                !showWorkflowProgress &&
+                isAssistantMessageBlank(message.parts as never)
+              ) {
+                return null
+              }
+
               return (
                 <motion.div
                   key={message.id}
@@ -922,6 +944,32 @@ function ChatPanelChat({
             </motion.div>
             )
           })}
+
+          {chatError && (
+            <div
+              role="alert"
+              className="flex w-full max-w-[980px] items-start justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            >
+              <div>
+                <p className="font-medium">
+                  请求失败
+                  {chatError.statusCode ? `（状态码 ${chatError.statusCode}）` : ''}
+                  {chatError.code ? ` · ${chatError.code}` : ''}
+                </p>
+                <p className="mt-1 break-words text-destructive/90">
+                  {chatError.message}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => clearError()}
+                aria-label="关闭错误提示"
+                className="shrink-0 rounded p-1 text-destructive/70 hover:bg-destructive/20 hover:text-destructive"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -947,27 +995,6 @@ function ChatPanelChat({
           </motion.div>
         )}
       </AnimatePresence>
-
-      {chatError && (
-        <div className="mx-4 mb-2 flex items-start justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive md:mx-6">
-          <div>
-            <p className="font-medium">
-              请求失败
-              {chatError.statusCode ? `（状态码 ${chatError.statusCode}）` : ''}
-              {chatError.code ? ` · ${chatError.code}` : ''}
-            </p>
-            <p className="mt-1 text-destructive/90">{chatError.message}</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => clearError()}
-            aria-label="关闭错误提示"
-            className="shrink-0 rounded p-1 text-destructive/70 hover:bg-destructive/20 hover:text-destructive"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      )}
 
       <ChatComposer
         value={localSelection}

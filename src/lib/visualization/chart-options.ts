@@ -15,13 +15,13 @@ export interface ChartThemeColors {
 }
 
 export const DEFAULT_CHART_THEME: ChartThemeColors = {
-  text: 'oklch(0.93 0.005 260)',
-  muted: 'oklch(0.68 0.01 260)',
-  border: 'oklch(0.32 0.018 260)',
-  surface: 'oklch(0.21 0.014 260)',
-  tableHeader: 'oklch(0.27 0.016 260)',
-  tableStripe: 'oklch(0.24 0.014 260 / 55%)',
-  tableRowLine: 'oklch(0.34 0.018 260 / 45%)',
+  text: normalizeChartColor('oklch(0.93 0.005 260)'),
+  muted: normalizeChartColor('oklch(0.68 0.01 260)'),
+  border: normalizeChartColor('oklch(0.32 0.018 260)'),
+  surface: normalizeChartColor('oklch(0.21 0.014 260)'),
+  tableHeader: normalizeChartColor('oklch(0.27 0.016 260)'),
+  tableStripe: normalizeChartColor('oklch(0.24 0.014 260 / 55%)'),
+  tableRowLine: normalizeChartColor('oklch(0.34 0.018 260 / 45%)'),
   palette: normalizeChartPalette([
     'oklch(0.78 0.14 185)',
     'oklch(0.76 0.16 155)',

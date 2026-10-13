@@ -31,8 +31,10 @@ export function encryptSecret(plain: string, secret = getDataSourceSecret()): st
 
 export function decryptSecret(payload: string, secret = getDataSourceSecret()): string {
   const key = deriveKey(secret)
-  const [ivText, tagText, dataText] = payload.split('.')
-  if (!ivText || !tagText || !dataText) {
+  const parts = payload.split('.')
+  const [ivText, tagText, dataText] = parts
+  // 空密码加密后密文本体（dataText）是空字符串，属于合法格式，不能用真值判断
+  if (parts.length !== 3 || !ivText || !tagText || dataText === undefined) {
     throw new Error('数据源密码密文格式无效')
   }
   const decipher = createDecipheriv(
