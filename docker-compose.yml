@@ -1,0 +1,81 @@
+# Babata Docker Compose 部署
+#
+# 前置：在本目录准备 .env（cp .env.example .env 后编辑），至少设置
+#   OPENAI_API_KEY（或 ANTHROPIC_API_KEY）、BABATA_AUTH_SECRET、BABATA_DATA_SOURCE_SECRET
+#
+# 启动: docker compose up -d --build
+# 停止: docker compose stop        （保留容器与数据）
+# 下线: docker compose down        （删除容器，数据卷保留）
+# 详见 README.md「Docker 部署」
+
+name: babata
+
+services:
+  babata:
+    image: babata:latest
+    build:
+      context: .
+      args:
+        # 默认官方 npm；内网可改: NPM_REGISTRY=https://registry.npmmirror.com docker compose build
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${BABATA_PORT:-3000}:3000"
+    # 业务配置全部来自 .env（LLM、数仓、混沌等）
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Docker 会把 HOSTNAME 覆盖成容器 ID，必须显式指定，否则 Next 只监听容器内网卡、健康检查连不上
+      HOSTNAME: 0.0.0.0
+      # 会话 / 用户 / 数据源 / 知识库元数据所在的 SQLite，位于数据卷
+      BABATA_STORAGE_URL: file:/app/data/storage.db
+      # 生产必填；未设置时 compose 直接报错，避免带着占位密钥启动
+      BABATA_AUTH_SECRET: ${BABATA_AUTH_SECRET:?请在 .env 中设置 BABATA_AUTH_SECRET}
+      BABATA_DATA_SOURCE_SECRET: ${BABATA_DATA_SOURCE_SECRET:?请在 .env 中设置 BABATA_DATA_SOURCE_SECRET}
+    volumes:
+      # storage.db 与上传的知识库文件（/app/data/knowledge）
+      - babata-data:/app/data
+      # 审计日志 logs/babata-audit.log
+      - babata-logs:/app/logs
+    # 容器内的 127.0.0.1 是容器自己；要访问宿主机上的服务（如 KG_RAG_ENDPOINT、本地数仓）
+    # 请在 .env 中改用 host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/login').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # 一次性命令（创建 / 改密用户）。运行镜像是 standalone 产物，没有 tsx 与源码，
+  # 所以这里用构建阶段的镜像，并挂同一个数据卷。不随 up 启动，需 --profile tools：
+  #   docker compose --profile tools run --rm cli pnpm user:create admin 你的密码
+  #   docker compose --profile tools run --rm cli pnpm user:chpwd admin 新密码
+  cli:
+    profiles: ["tools"]
+    image: babata-cli:latest
+    build:
+      context: .
+      target: builder
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+    user: "1001:1001"
+    env_file:
+      - .env
+    environment:
+      BABATA_STORAGE_URL: file:/app/data/storage.db
+    volumes:
+      - babata-data:/app/data
+
+volumes:
+  babata-data:
+  babata-logs:

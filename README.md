@@ -67,6 +67,12 @@ pnpm user:create admin 你的密码
 pnpm user:chpwd admin 新密码
 ```
 
+**首个创建的用户会自动成为「系统管理员」**（此时系统中还没有任何管理员）；之后创建的用户默认没有角色，需由管理员在设置页分配。若用户已存在却没有权限，补授权：
+
+```bash
+pnpm user:grant-admin admin
+```
+
 本地开发可临时关闭鉴权：`.env` 中设置 `BABATA_AUTH_DISABLED=true`。
 
 ### 开发
@@ -88,6 +94,123 @@ pnpm start
 - `build` 使用 webpack 生成 standalone，并同步 `.next/static`、`public`、`.env` 到 standalone 目录
 - `start` 默认监听 `0.0.0.0:3000`，启动日志会打印本机 Network IP
 - 相对路径 `BABATA_STORAGE_URL=file:./storage.db` 会自动解析为**项目根目录**下的数据库文件
+
+---
+
+## Docker 部署
+
+基于 `Dockerfile`（多阶段构建，产出 Next.js standalone 镜像）与 `docker-compose.yml`。需要 Docker 20.10+ 与 Docker Compose v2（`docker compose` 命令）。
+
+### 1. 准备配置
+
+```bash
+cp .env.example .env
+# 编辑 .env，至少设置：
+#   OPENAI_API_KEY（或 ANTHROPIC_API_KEY）
+#   BABATA_AUTH_SECRET          会话签名密钥，填随机长字符串
+#   BABATA_DATA_SOURCE_SECRET   数据源密码加密密钥，填随机长字符串
+```
+
+- 生成随机密钥：`openssl rand -hex 32`
+- `BABATA_AUTH_SECRET`、`BABATA_DATA_SOURCE_SECRET` 为空时 `docker compose` 会直接报错，不会带着占位密钥启动。
+- 内网 HTTP 访问保持 `BABATA_COOKIE_SECURE=false`。
+- **容器里的 `127.0.0.1` 是容器自己，不是宿主机。** 如果 `KG_RAG_ENDPOINT`、数仓等服务跑在宿主机上，请改用 `host.docker.internal`，例如 `KG_RAG_ENDPOINT=http://host.docker.internal:8080/v1/sql-context`。
+- 如需改宿主机端口，在 `.env` 中设置 `BABATA_PORT=8080`（默认 `3000`）。
+
+### 2. 构建并启动
+
+```bash
+docker compose up -d --build
+```
+
+首次构建需要下载依赖并执行 `next build`，耗时较长。启动后用 `docker compose ps` 查看状态，`healthy` 表示服务就绪；浏览器访问 `http://<服务器IP>:3000`。
+
+内网无法访问官方 npm 时，可指定镜像源（仅当确认源已同步最新包时使用）：
+
+```bash
+NPM_REGISTRY=https://registry.npmmirror.com docker compose up -d --build
+```
+
+### 3. 创建登录用户（首次部署必做）
+
+先确保服务已启动（`up -d` 之后），再执行：
+
+```bash
+docker compose --profile tools run --build --rm cli pnpm user:create admin 你的密码
+```
+
+**首个创建的用户会自动成为「系统管理员」**，登录后即可在设置页管理用户、角色与数据源；之后创建的用户默认没有角色，需由管理员分配。
+
+如果登录后没有任何权限（例如用户是在旧版本镜像里创建的），补授权：
+
+```bash
+docker compose --profile tools run --build --rm cli pnpm user:grant-admin admin
+```
+
+修改密码：
+
+```bash
+docker compose --profile tools run --build --rm cli pnpm user:chpwd admin 新密码
+```
+
+> 运行镜像是 standalone 产物，不含 `tsx` 与源码，所以用户管理命令通过 `cli` 服务（基于构建阶段镜像、挂载同一数据卷）执行。`--build` 保证用的是最新代码，构建无变化时会直接走缓存。
+
+### 4. 停止、重启、更新
+
+```bash
+# 停止（保留容器与数据）
+docker compose stop
+
+# 再次启动已停止的服务
+docker compose start
+
+# 重启
+docker compose restart
+
+# 停止并删除容器、网络（数据卷保留，数据不丢）
+docker compose down
+
+# 更新代码后重新构建并滚动重启
+docker compose up -d --build
+```
+
+**危险操作**：`docker compose down -v` 会同时删除数据卷，即会话、用户、数据源与上传的知识库全部丢失，务必先备份。
+
+### 5. 日志与排查
+
+```bash
+# 实时查看应用日志
+docker compose logs -f babata
+
+# 查看容器状态与健康检查
+docker compose ps
+
+# 进入运行中的容器
+docker compose exec babata sh
+```
+
+审计日志位于容器内 `/app/logs/babata-audit.log`（挂载在 `babata-logs` 卷）。
+
+### 6. 数据持久化与备份
+
+| 卷 | 容器路径 | 内容 |
+|----|----------|------|
+| `babata-data` | `/app/data` | `storage.db`（会话、用户、数据源、知识库元数据）与上传的知识库文件 `knowledge/` |
+| `babata-logs` | `/app/logs` | 审计日志 |
+
+备份与恢复数据卷：
+
+```bash
+# 备份到当前目录
+docker run --rm -v babata_babata-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/babata-data-$(date +%F).tgz -C /data .
+
+# 恢复（先 docker compose stop，再执行）
+docker run --rm -v babata_babata-data:/data -v "$PWD":/backup alpine \
+  sh -c "cd /data && tar xzf /backup/babata-data-YYYY-MM-DD.tgz"
+```
+
+> 卷名为 `<项目名>_<卷名>`，项目名由 `docker-compose.yml` 顶部的 `name: babata` 指定，故为 `babata_babata-data`。可用 `docker volume ls` 确认。
 
 ---
 
@@ -119,6 +242,8 @@ babata/
 │   └── mastra/           # Agent、Workflow、Tools、Skills
 ├── workspace/agents/     # Agent Skills（按 Agent 隔离）
 ├── scripts/              # 用户管理、standalone 启动与资源同步
+├── Dockerfile            # 多阶段构建镜像
+├── docker-compose.yml    # Compose 部署（应用 + 数据卷 + 用户管理工具服务）
 ├── docs/                 # 规格说明、技术方案、实施计划
 └── storage.db            # 本地 SQLite（会话、用户、数据源、知识库，运行时生成）
 ```
@@ -150,6 +275,9 @@ babata/
 | `pnpm lint` | ESLint |
 | `pnpm user:create <用户> <密码>` | 创建登录用户 |
 | `pnpm user:chpwd <用户> <新密码>` | 修改用户密码 |
+| `pnpm user:grant-admin <用户>` | 把已有用户加入「系统管理员」角色 |
+| `docker compose up -d --build` | Docker 构建并启动（详见「Docker 部署」） |
+| `docker compose stop` / `docker compose down` | Docker 停止 / 删除容器（数据卷保留） |
 
 ---
 
@@ -157,7 +285,7 @@ babata/
 
 1. 在项目根目录执行 `pnpm build && pnpm start`，不要在 `.next/standalone` 子目录单独 build
 2. 确保 `storage.db` 与 `.env` 位于项目根（或通过 `BABATA_STORAGE_URL` 指定绝对路径）
-3. 首次部署后执行 `pnpm user:create` 创建管理员，并在设置页分配「系统管理员」角色
+3. 首次部署后执行 `pnpm user:create` 创建管理员（首个用户自动成为「系统管理员」）
 4. 浏览器请使用服务器 **Network IP**（如 `http://10.x.x.x:3000`），不要访问 `http://0.0.0.0:3000`
 
 ---

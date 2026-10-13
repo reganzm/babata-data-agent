@@ -156,3 +156,73 @@ test('resolveVirtualSql maps a foreign db prefix onto the bound table instead of
   )
   assert.doesNotMatch(resolved.rewrittenSql, /other_db/)
 })
+
+test('resolveVirtualSql treats top-level CTE names as CTEs, not tables', () => {
+  const resolved = resolveVirtualSql(
+    `WITH user_theme AS (
+       SELECT p.theme_id, p.user_id FROM dws_practice_summary p GROUP BY p.theme_id, p.user_id
+     ), agg AS (
+       SELECT theme_id, COUNT(*) AS n FROM user_theme GROUP BY theme_id
+     )
+     SELECT t.theme_name, agg.n FROM d_theme t LEFT JOIN agg ON agg.theme_id = t.theme_id`,
+    qualifiedBindings,
+  )
+  assert.deepEqual(resolved.referencedTables.sort(), ['d_theme', 'dws_practice_summary'])
+})
+
+test('a CTE cannot hide a real table of the same name from the allow list', () => {
+  // CTE 定义体内的 FROM secret 指向真实表，必须照常校验
+  assert.throws(
+    () =>
+      resolveVirtualSql(
+        'WITH secret AS (SELECT * FROM secret) SELECT * FROM secret',
+        qualifiedBindings,
+      ),
+    /表 secret 不在当前虚拟数据源允许列表中/,
+  )
+  assert.throws(
+    () =>
+      resolveVirtualSql(
+        'WITH x AS (SELECT * FROM d_theme) SELECT * FROM x JOIN secret ON 1 = 1',
+        qualifiedBindings,
+      ),
+    /表 secret 不在当前虚拟数据源允许列表中/,
+  )
+})
+
+test('only top-level CTEs are recognised; nested WITH names are still treated as tables', () => {
+  assert.throws(
+    () =>
+      resolveVirtualSql(
+        'SELECT * FROM (WITH a AS (SELECT 1 AS x) SELECT * FROM a) t',
+        qualifiedBindings,
+      ),
+    /表 a 不在当前虚拟数据源允许列表中/,
+  )
+})
+
+test('FROM inside EXTRACT / TRIM / SUBSTRING / IS DISTINCT FROM does not introduce a table', () => {
+  assert.deepEqual(
+    extractReferencedTableNames(
+      `SELECT EXTRACT(YEAR FROM p.practice_start_time) AS y,
+              TRIM(BOTH ' ' FROM t.theme_name) AS n,
+              SUBSTRING(t.theme_name FROM 1 FOR 3) AS s
+       FROM dws_practice_summary p JOIN d_theme t ON t.theme_id = p.theme_id
+       WHERE p.user_id IS DISTINCT FROM 0`,
+    ).sort(),
+    ['d_theme', 'dws_practice_summary'],
+  )
+})
+
+test('backtick-quoted table names are recognised and foreign db prefixes are stripped', () => {
+  assert.deepEqual(
+    extractReferencedTableNames('SELECT * FROM `dws_practice_summary` p'),
+    ['dws_practice_summary'],
+  )
+  const resolved = resolveVirtualSql(
+    'SELECT COUNT(*) FROM `other_db`.`d_theme` t',
+    qualifiedBindings,
+  )
+  assert.doesNotMatch(resolved.rewrittenSql, /other_db/)
+  assert.match(resolved.rewrittenSql, /FROM d_theme t/)
+})

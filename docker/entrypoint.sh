@@ -1,8 +1,10 @@
 #!/bin/sh
 set -e
 # 挂载卷 /app/data 常为 root 属主，nextjs(1001) 无法创建 storage.db（libsql 报错 14）
-mkdir -p /app/data /app/config
+mkdir -p /app/data /app/config /app/logs
 chown -R nextjs:nodejs /app/data
+# 审计日志目录（compose 挂载的 logs 卷默认 root 属主，nextjs 无法写入会静默丢日志）
+chown -R nextjs:nodejs /app/logs
 # storage.db（含 babata_users）落在 /app/data（挂载卷需 chown 1001:1001）
 
 # -v ./config:/app/config 会用宿主机空目录盖住镜像；从 defaults 种子到挂载目录（需可写）

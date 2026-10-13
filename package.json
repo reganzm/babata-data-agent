@@ -8,7 +8,8 @@
     "start": "node scripts/start-standalone.js",
     "lint": "next lint",
     "user:create": "tsx scripts/create-user.ts",
-    "user:chpwd": "tsx scripts/change-user-password.ts"
+    "user:chpwd": "tsx scripts/change-user-password.ts",
+    "user:grant-admin": "tsx scripts/grant-admin.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.58",

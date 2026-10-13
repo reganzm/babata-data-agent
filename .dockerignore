@@ -25,5 +25,13 @@ pnpm-debug.log*
 .vscode
 .idea
 
+# 本地运行数据 / 日志 / 工具目录：不进入构建上下文
+data
+datas
+logs
+.claude
+.cursor
+docker/context
+
 README.md
 docs

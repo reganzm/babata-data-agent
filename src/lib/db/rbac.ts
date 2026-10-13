@@ -117,6 +117,40 @@ async function runRbacSeed(): Promise<void> {
   }
 }
 
+/**
+ * 引导首个管理员：系统管理员角色当前没有任何成员时，把该用户加入该角色。
+ * 角色在服务首次访问 RBAC 时才创建，且只会把「当时已存在」的用户加进去；
+ * 先启动服务、后用命令创建用户（Docker 部署的典型顺序）会导致用户没有任何权限，这里兜底。
+ */
+export async function grantAdminRoleIfNoAdmin(userId: string): Promise<boolean> {
+  await ensureRbacSeed()
+  const roleId = await findAdminRoleId()
+  if (!roleId) return false
+  const db = getDbClient()
+  const members = await db.execute({
+    sql: `SELECT COUNT(*) AS c FROM babata_user_roles WHERE role_id = ?`,
+    args: [roleId],
+  })
+  if (Number((members.rows[0] as unknown as { c: number }).c) > 0) return false
+  await db.execute({
+    sql: `INSERT OR IGNORE INTO babata_user_roles (user_id, role_id) VALUES (?, ?)`,
+    args: [userId, roleId],
+  })
+  return true
+}
+
+/** 无条件把用户加入系统管理员角色（命令行补救用，幂等） */
+export async function grantAdminRole(userId: string): Promise<void> {
+  await ensureRbacSeed()
+  const roleId = await findAdminRoleId()
+  if (!roleId) throw new Error('系统管理员角色不存在')
+  const db = getDbClient()
+  await db.execute({
+    sql: `INSERT OR IGNORE INTO babata_user_roles (user_id, role_id) VALUES (?, ?)`,
+    args: [userId, roleId],
+  })
+}
+
 let rbacSeedPromise: Promise<void> | null = null
 
 export async function ensureRbacSeed(): Promise<void> {

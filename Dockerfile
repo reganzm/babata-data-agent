@@ -32,6 +32,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # 空目录不会进入 stage 产物；占位文件保证后续 COPY 成功
 RUN mkdir -p public && touch public/.keep
+# builder 镜像还用于一次性命令（docker compose run cli pnpm user:create ...），
+# 预先建好 /app/data 并交给 1001，使挂载的数据卷首次初始化后可被 nextjs(1001) 读写
+RUN mkdir -p /app/data && chown 1001:1001 /app/data
 RUN pnpm build
 
 FROM node:22-bookworm-slim AS runner
@@ -53,12 +56,14 @@ ENV BABATA_STORAGE_URL=file:/app/data/storage.db
 # node:22-bookworm-slim 已含 ca-certificates，避免 apt-get（Post-Invoke 清理脚本易报错）
 RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 --ingroup nodejs nextjs \
-  && mkdir -p /app/data /app/config /app/config.defaults \
+  && mkdir -p /app/data /app/logs /app/config /app/config.defaults \
   && chown -R nextjs:nodejs /app
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+# Agent Skills 目录：运行时按 AGENT_SKILLS_ROOT（默认 <cwd>/workspace）读取，standalone 产物不会带上它
+COPY --from=builder --chown=nextjs:nodejs /app/workspace ./workspace
 COPY .env.example /app/config.defaults/.env.example
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
